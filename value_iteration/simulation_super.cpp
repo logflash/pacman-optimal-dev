@@ -28,7 +28,7 @@ using namespace std;
 
 uint32_t maze[MAZE_ROWS] = {0};
 int pellet_pos = 64;
-int power_duration = 10;  // Will be loaded from file
+int power_duration = 6;  // Will be loaded from file
 
 uint8_t safety_value[MAZE_CELLS][GHOST_STATES][GHOST_STATES][MAX_POWER_STATES];
 uint8_t ttr_g_value[MAZE_CELLS][GHOST_STATES][GHOST_STATES][MAX_POWER_STATES];  // Time for ghosts to catch Pacman
@@ -109,43 +109,43 @@ bool load_values(const string& filename) {
         cerr << "Error: Could not open " << filename << endl;
         return false;
     }
-    
+
     ValueFileHeaderSuper header;
     file.read(reinterpret_cast<char*>(&header), sizeof(header));
-    
+
     if (memcmp(header.magic, "PVAS", 4) != 0) {
         cerr << "Error: Invalid file format (expected PVAS)" << endl;
         return false;
     }
-    
+
     if (header.version != 3) {
         cerr << "Error: Unsupported version " << (int)header.version << " (expected 3)" << endl;
         return false;
     }
-    
+
     if (header.maze_rows != MAZE_ROWS || header.maze_cols != MAZE_COLS) {
         cerr << "Error: Maze size mismatch" << endl;
         return false;
     }
-    
+
     pellet_pos = header.pellet_pos;
     power_duration = header.power_duration;
-    
+
     if (power_duration > MAX_POWER_DURATION) {
         cerr << "Error: Power duration " << power_duration << " exceeds max " << MAX_POWER_DURATION << endl;
         return false;
     }
-    
+
     file.read(reinterpret_cast<char*>(maze), sizeof(maze));
     file.read(reinterpret_cast<char*>(safety_value), sizeof(safety_value));
     file.read(reinterpret_cast<char*>(ttr_g_value), sizeof(ttr_g_value));
     file.read(reinterpret_cast<char*>(ttr_p_value), sizeof(ttr_p_value));
-    
+
     if (!file) {
         cerr << "Error: Failed to read value data" << endl;
         return false;
     }
-    
+
     file.close();
     return true;
 }
@@ -160,22 +160,22 @@ void print_game_state(int p, int g1, int g2, int power_state, int step) {
         cout << " [Power expired]";
     }
     cout << endl;
-    
+
     cout << "  ";
     for (int c = 0; c < MAZE_COLS; c++) cout << c << " ";
     cout << endl;
-    
+
     bool g1_alive = (g1 != DEAD);
     bool g2_alive = (g2 != DEAD);
-    bool pacman_caught = (!is_powered(power_state)) && 
+    bool pacman_caught = (!is_powered(power_state)) &&
                          ((g1_alive && p == g1) || (g2_alive && p == g2));
     bool pacman_wins = !g1_alive && !g2_alive;
-    
+
     for (int r = 0; r < MAZE_ROWS; r++) {
         cout << setw(3) << setfill(' ') << r << " ";
         for (int c = 0; c < MAZE_COLS; c++) {
             int idx = r * MAZE_COLS + c;
-            
+
             if (pacman_caught && idx == p) {
                 // Pacman caught
                 if (g1_alive && g1 == p && g2_alive && g2 == p) cout << "X ";
@@ -200,13 +200,13 @@ void print_game_state(int p, int g1, int g2, int power_state, int step) {
         }
         cout << endl;
     }
-    
+
     cout << "Pacman=" << p << " [" << row(p) << "," << col(p) << "]";
     if (g1_alive) cout << ", Ghost1=" << g1 << " [" << row(g1) << "," << col(g1) << "]";
     else cout << ", Ghost1=DEAD";
     if (g2_alive) cout << ", Ghost2=" << g2 << " [" << row(g2) << "," << col(g2) << "]";
     else cout << ", Ghost2=DEAD";
-    
+
     if (pacman_caught) cout << " (CAUGHT!)";
     if (pacman_wins) cout << " (PACMAN WINS!)";
     cout << endl << endl;
@@ -220,46 +220,46 @@ PacmanMoveResult get_optimal_pacman_move(int p, int g1, int g2, int power_state)
     result.new_g1 = g1;
     result.new_g2 = g2;
     result.new_power = power_state;
-    
+
     int pac_neighbors[4], pac_n;
     get_neighbors(p, pac_neighbors, pac_n);
-    
+
     if (pac_n == 0) {
         cout << "ERROR: Pacman has no valid moves!" << endl;
         return result;
     }
-    
+
     bool g1_alive = (g1 != DEAD);
     bool g2_alive = (g2 != DEAD);
-    
+
     // Get ghost moves (only for alive ghosts)
     int g1_neighbors[4], g1_n = 0;
     int g2_neighbors[4], g2_n = 0;
-    
+
     if (g1_alive) get_neighbors(g1, g1_neighbors, g1_n);
     if (g2_alive) get_neighbors(g2, g2_neighbors, g2_n);
-    
+
     int g1_moves = g1_alive ? g1_n : 1;
     int g2_moves = g2_alive ? g2_n : 1;
-    
+
     uint8_t best_safety = 0;
     uint8_t best_ttr_g = 0;    // Max time until ghosts catch Pacman (Pacman maximizes)
     uint8_t best_ttr_p = 255;  // Min time for Pacman to catch all ghosts (Pacman minimizes)
     int best_p1 = pac_neighbors[0];
     int best_p2 = pac_neighbors[0];
     int best_pw = power_state;
-    
+
     // Pacman chooses move to maximize value
     for (int pi = 0; pi < pac_n; pi++) {
         int np1 = pac_neighbors[pi];
-        
+
         // Compute power state after Pacman's first move
         int pw_after_move1 = power_state;
         if (power_state == PELLET_EXISTS && np1 == pellet_pos) {
             pw_after_move1 = power_duration;  // Pacman eats pellet
         }
         bool will_be_powered = is_powered(pw_after_move1);
-        
+
         // If powered: Pacman moves twice. Otherwise: single move.
         int pac_neighbors2[5], pac_n2;
         if (will_be_powered) {
@@ -269,70 +269,80 @@ PacmanMoveResult get_optimal_pacman_move(int p, int g1, int g2, int power_state)
             pac_n2 = 1;
             pac_neighbors2[0] = np1;  // Only one move, np2 == np1
         }
-        
+
         for (int pi2 = 0; pi2 < pac_n2; pi2++) {
             int np2 = pac_neighbors2[pi2];
-            
+
             // Skip moves into ghost positions (unless powered)
             if (!will_be_powered) {
                 if ((g1_alive && np1 == g1) || (g2_alive && np1 == g2)) {
                     continue;
                 }
             }
-            
+
             uint8_t worst_safety = 1;
             uint8_t worst_ttr_g = 255;  // Ghosts minimize (catch Pacman faster)
             uint8_t worst_ttr_p = 0;    // Ghosts maximize (delay being caught)
-            
+
+            // For powered mode: check if ghosts are caught on Pacman's first move
+            // If so, they don't get to move on the second (simultaneous) move
+            bool g1_caught_move1 = will_be_powered && g1_alive && (np1 == g1);
+            bool g2_caught_move1 = will_be_powered && g2_alive && (np1 == g2);
+
+            // Adjust iteration: ghosts caught on move 1 have no valid moves
+            int g1_iter_count = g1_caught_move1 ? 1 : g1_moves;
+            int g2_iter_count = g2_caught_move1 ? 1 : g2_moves;
+
             // Iterate over ghost move combinations
-            for (int gi1 = 0; gi1 < g1_moves; gi1++) {
-                for (int gi2 = 0; gi2 < g2_moves; gi2++) {
-                    int ng1 = g1_alive ? g1_neighbors[gi1] : DEAD;
-                    int ng2 = g2_alive ? g2_neighbors[gi2] : DEAD;
-                    
+            for (int gi1 = 0; gi1 < g1_iter_count; gi1++) {
+                for (int gi2 = 0; gi2 < g2_iter_count; gi2++) {
+                    // Ghosts caught on move 1 are already DEAD for move 2
+                    int ng1 = g1_caught_move1 ? DEAD : (g1_alive ? g1_neighbors[gi1] : DEAD);
+                    int ng2 = g2_caught_move1 ? DEAD : (g2_alive ? g2_neighbors[gi2] : DEAD);
+
                     // Determine outcome of this move combination
                     int final_g1 = ng1;
                     int final_g2 = ng2;
                     int final_pw = pw_after_move1;
                     bool pacman_dies = false;
-                    
+
                     if (will_be_powered) {
                         // Powered: Pacman moves twice, can eat ghosts
-                        // Check if Pacman catches ghost on first move
-                        bool catch1_move1 = g1_alive && (np1 == g1);
-                        bool catch2_move1 = g2_alive && (np1 == g2);
-                        
+                        // Ghosts caught on first move are already handled above (ng1/ng2 = DEAD)
+                        bool g1_alive_after_move1 = g1_alive && !g1_caught_move1;
+                        bool g2_alive_after_move1 = g2_alive && !g2_caught_move1;
+
                         // Check if Pacman catches ghost on second move (after ghosts move)
-                        bool catch1_move2 = g1_alive && (np2 == ng1);
-                        bool catch2_move2 = g2_alive && (np2 == ng2);
-                        
+                        bool catch1_move2 = g1_alive_after_move1 && (np2 == ng1);
+                        bool catch2_move2 = g2_alive_after_move1 && (np2 == ng2);
+
                         // Check for clipping on second move (Pacman and ghost swap)
-                        bool clip1 = g1_alive && (np1 == ng1 && g1 == np2);
-                        bool clip2 = g2_alive && (np1 == ng2 && g2 == np2);
-                        
+                        bool clip1 = g1_alive_after_move1 && (np1 == ng1 && g1 == np2);
+                        bool clip2 = g2_alive_after_move1 && (np1 == ng2 && g2 == np2);
+
                         // Pacman eats ghosts
-                        if (catch1_move1 || catch1_move2 || clip1) final_g1 = DEAD;
-                        if (catch2_move1 || catch2_move2 || clip2) final_g2 = DEAD;
+                        if (g1_caught_move1 || catch1_move2 || clip1) final_g1 = DEAD;
+                        if (g2_caught_move1 || catch2_move2 || clip2) final_g2 = DEAD;
                     } else {
                         // Not powered: single move, ghosts can catch Pacman
                         // Check for clipping (position swap)
                         bool clip1 = g1_alive && (p == ng1 && g1 == np1);
                         bool clip2 = g2_alive && (p == ng2 && g2 == np1);
-                        
+
                         // Check collisions after movement
                         bool collide1 = g1_alive && (np1 == ng1 || clip1);
                         bool collide2 = g2_alive && (np1 == ng2 || clip2);
-                        
+
                         if (collide1 || collide2) {
                             pacman_dies = true;
                         }
                     }
-                    
+
                     // Decrement power timer for next state
                     if (is_powered(final_pw)) {
                         final_pw = decrement_power(final_pw);
                     }
-                    
+
                     uint8_t s, tg, tp;
                     if (pacman_dies) {
                         s = 0;
@@ -348,17 +358,17 @@ PacmanMoveResult get_optimal_pacman_move(int p, int g1, int g2, int power_state)
                         tg = ttr_g_value[np2][final_g1][final_g2][final_pw];
                         tp = ttr_p_value[np2][final_g1][final_g2][final_pw];
                     }
-                    
+
                     // Ghosts minimize Pacman's values
                     worst_safety = min(worst_safety, s);
                     worst_ttr_g = min(worst_ttr_g, tg);  // Ghosts minimize survival time
                     worst_ttr_p = max(worst_ttr_p, tp);  // Ghosts maximize time until caught
                 }
             }
-            
+
             // Update best move: Pacman maximizes safety and TTR_G, minimizes TTR_P
             bool dominated_by_new = false;
-            
+
             if (worst_safety > best_safety) {
                 // New move is safer - always better
                 dominated_by_new = true;
@@ -372,7 +382,7 @@ PacmanMoveResult get_optimal_pacman_move(int p, int g1, int g2, int power_state)
                     dominated_by_new = true;
                 }
             }
-            
+
             if (dominated_by_new) {
                 best_safety = worst_safety;
                 best_ttr_g = worst_ttr_g;
@@ -383,14 +393,14 @@ PacmanMoveResult get_optimal_pacman_move(int p, int g1, int g2, int power_state)
             }
         }
     }
-    
+
     result.pos1 = best_p1;
     result.pos2 = best_p2;
     result.new_power = best_pw;
-    
+
     // Now compute actual ghost response to best moves
     get_optimal_ghost_moves_internal(p, best_p1, best_p2, g1, g2, best_pw, result.new_g1, result.new_g2);
-    
+
     return result;
 }
 
@@ -404,70 +414,85 @@ void get_optimal_ghost_moves_internal(int p, int np1, int np2, int g1, int g2, i
     bool g1_alive = (g1 != DEAD);
     bool g2_alive = (g2 != DEAD);
     bool powered = is_powered(power_state);
-    
+
     int g1_neighbors[4], g1_n = 0;
     int g2_neighbors[4], g2_n = 0;
-    
+
     if (g1_alive) get_neighbors(g1, g1_neighbors, g1_n);
     if (g2_alive) get_neighbors(g2, g2_neighbors, g2_n);
-    
+
     best_g1 = g1_alive ? (g1_n > 0 ? g1_neighbors[0] : g1) : DEAD;
     best_g2 = g2_alive ? (g2_n > 0 ? g2_neighbors[0] : g2) : DEAD;
-    
+
     if (!g1_alive && !g2_alive) return;
-    
+
     uint8_t worst_safety = 1;
     uint8_t worst_ttr_g = 255;  // Ghosts want to minimize this (catch Pacman faster)
+    uint8_t worst_ttr_p = 0;    // Ghosts want to maximize this (delay being caught)
     bool found_catch = false;
     int best_catch_distance = 999;
-    
+
     int g1_moves = g1_alive ? g1_n : 1;
     int g2_moves = g2_alive ? g2_n : 1;
-    
-    for (int gi1 = 0; gi1 < g1_moves; gi1++) {
-        for (int gi2 = 0; gi2 < g2_moves; gi2++) {
-            int ng1 = g1_alive ? g1_neighbors[gi1] : DEAD;
-            int ng2 = g2_alive ? g2_neighbors[gi2] : DEAD;
-            
+
+    // For powered mode: check if ghosts are caught on Pacman's first move
+    // If so, they don't get to move on the second (simultaneous) move
+    bool g1_caught_move1 = powered && g1_alive && (np1 == g1);
+    bool g2_caught_move1 = powered && g2_alive && (np1 == g2);
+
+    // Adjust iteration: ghosts caught on move 1 have no valid moves
+    int g1_iter_count = g1_caught_move1 ? 1 : g1_moves;
+    int g2_iter_count = g2_caught_move1 ? 1 : g2_moves;
+
+    for (int gi1 = 0; gi1 < g1_iter_count; gi1++) {
+        for (int gi2 = 0; gi2 < g2_iter_count; gi2++) {
+            // Ghosts caught on move 1 are already DEAD for move 2
+            int ng1 = g1_caught_move1 ? DEAD : (g1_alive ? g1_neighbors[gi1] : DEAD);
+            int ng2 = g2_caught_move1 ? DEAD : (g2_alive ? g2_neighbors[gi2] : DEAD);
+
             int final_g1 = ng1;
             int final_g2 = ng2;
             int final_pw = power_state;
-            
+
             if (powered) {
-                // Powered: Pacman moves twice, can eat ghosts
-                // Check if Pacman catches ghost on first move
-                bool catch1_move1 = g1_alive && (np1 == g1);
-                bool catch2_move1 = g2_alive && (np1 == g2);
-                
-                // Check if Pacman catches ghost on second move (after ghosts move)
-                bool catch1_move2 = g1_alive && (np2 == ng1);
-                bool catch2_move2 = g2_alive && (np2 == ng2);
-                
-                // Check for clipping on second move (Pacman and ghost swap)
-                bool clip1 = g1_alive && (np1 == ng1 && g1 == np2);
-                bool clip2 = g2_alive && (np1 == ng2 && g2 == np2);
-                
-                // Ghosts want to AVOID being eaten
-                if (catch1_move1 || catch1_move2 || clip1) final_g1 = DEAD;
-                if (catch2_move1 || catch2_move2 || clip2) final_g2 = DEAD;
+                // Powered: Pacman moves twice
+                // First move: Pacman moves to np1, ghosts stay at g1/g2
+                // Second move: Pacman moves to np2 SIMULTANEOUSLY with ghosts moving to ng1/ng2
+
+                // Ghosts caught on first move are already handled above (ng1/ng2 = DEAD)
+                bool g1_alive_after_move1 = g1_alive && !g1_caught_move1;
+                bool g2_alive_after_move1 = g2_alive && !g2_caught_move1;
+
+                // Second move is simultaneous: Pacman goes np1->np2, ghosts go g1->ng1, g2->ng2
+                // Check if Pacman catches ghost on second move (simultaneous collision)
+                bool catch1_move2 = g1_alive_after_move1 && (np2 == ng1);
+                bool catch2_move2 = g2_alive_after_move1 && (np2 == ng2);
+
+                // Check for clipping on second move (Pacman and ghost swap positions)
+                bool clip1 = g1_alive_after_move1 && (np1 == ng1 && g1 == np2);
+                bool clip2 = g2_alive_after_move1 && (np1 == ng2 && g2 == np2);
+
+                // Determine final ghost states
+                if (g1_caught_move1 || catch1_move2 || clip1) final_g1 = DEAD;
+                if (g2_caught_move1 || catch2_move2 || clip2) final_g2 = DEAD;
             } else {
                 // Not powered: single move (np1 == np2)
                 // Check for clipping (position swap)
                 bool clip1 = g1_alive && (p == ng1 && g1 == np1);
                 bool clip2 = g2_alive && (p == ng2 && g2 == np1);
-                
+
                 // Check collisions after movement (includes clipping)
                 bool collide1 = g1_alive && (np1 == ng1 || clip1);
                 bool collide2 = g2_alive && (np1 == ng2 || clip2);
-                
+
                 // Ghosts want to CATCH Pacman
                 bool catches = collide1 || collide2;
-                
+
                 if (catches) {
                     int dist1 = g1_alive ? manhattan_dist(ng1, np1) : 999;
                     int dist2 = g2_alive ? manhattan_dist(ng2, np1) : 999;
                     int total_dist = dist1 + dist2;
-                    
+
                     if (!found_catch || total_dist < best_catch_distance) {
                         best_g1 = ng1;
                         best_g2 = ng2;
@@ -476,26 +501,32 @@ void get_optimal_ghost_moves_internal(int p, int np1, int np2, int g1, int g2, i
                     }
                     continue;
                 }
-                
+
                 if (found_catch) continue;
             }
-            
+
             if (is_powered(final_pw)) {
                 final_pw = decrement_power(final_pw);
             }
-            
-            uint8_t s, tg;
+
+            uint8_t s, tg, tp;
             if (final_g1 == DEAD && final_g2 == DEAD) {
-                s = 1; tg = 255;  // Pacman wins - bad for ghosts
+                s = 1; tg = 255; tp = 0;  // Pacman wins - bad for ghosts
             } else {
                 s = safety_value[np2][final_g1][final_g2][final_pw];
                 tg = ttr_g_value[np2][final_g1][final_g2][final_pw];
+                tp = ttr_p_value[np2][final_g1][final_g2][final_pw];
             }
-            
-            // Ghosts minimize Pacman's survival time
-            if (s < worst_safety || (s == worst_safety && tg < worst_ttr_g)) {
+
+            // Ghosts minimize Pacman's survival time, then maximize time until caught
+            // Priority: 1) minimize safety, 2) minimize TTR_G, 3) maximize TTR_P
+
+            if (s < worst_safety ||
+                (s == worst_safety && tg < worst_ttr_g) ||
+                (s == worst_safety && tg == worst_ttr_g && tp > worst_ttr_p)) {
                 worst_safety = s;
                 worst_ttr_g = tg;
+                worst_ttr_p = tp;
                 best_g1 = ng1;
                 best_g2 = ng2;
             }
@@ -508,98 +539,128 @@ void simulate_optimal_play(int start_p, int start_g1, int start_g2, int max_step
     int g1 = start_g1;
     int g2 = start_g2;
     int power_state = PELLET_EXISTS;
-    
+    int last_ghost_caught = 0;  // Track which ghost was caught last (1 or 2)
+
     cout << "========================================" << endl;
     cout << "OPTIMAL PLAY SIMULATION (Super Pellet)" << endl;
     cout << "  Pacman moves 2x when powered!" << endl;
     cout << "========================================" << endl << endl;
-    
-    cout << "Super pellet at position " << pellet_pos 
+
+    cout << "Super pellet at position " << pellet_pos
          << " [" << row(pellet_pos) << "," << col(pellet_pos) << "]" << endl;
     cout << "Power duration: " << power_duration << " turns" << endl << endl;
-    
+
     cout << "Initial state:" << endl;
     cout << "  Safety: " << (int)safety_value[p][g1][g2][power_state]
          << " (0=ghosts win, 1=Pacman survives)" << endl;
-    cout << "  TTR_G: " << (int)ttr_g_value[p][g1][g2][power_state] 
+    cout << "  TTR_G: " << (int)ttr_g_value[p][g1][g2][power_state]
          << " (survival time - higher is better)" << endl;
-    cout << "  TTR_P: " << (int)ttr_p_value[p][g1][g2][power_state] 
+    cout << "  TTR_P: " << (int)ttr_p_value[p][g1][g2][power_state]
          << " (time to catch ghosts - lower is better)" << endl << endl;
-    
+
     print_game_state(p, g1, g2, power_state, 0);
-    
+
     for (int step = 1; step <= max_steps; step++) {
         bool g1_alive = (g1 != DEAD);
         bool g2_alive = (g2 != DEAD);
-        
+
         // Check win condition
         if (!g1_alive && !g2_alive) {
-            cout << "PACMAN WINS! Both ghosts eliminated at step " << step-1 << "!" << endl;
+            if (last_ghost_caught > 0) {
+                cout << "Pacman wins! Captured ghost #" << last_ghost_caught << endl;
+            } else {
+                cout << "PACMAN WINS! Both ghosts eliminated at step " << step-1 << "!" << endl;
+            }
             break;
         }
-        
+
+        // Check if one ghost caught and Pacman has won (safety=1)
+        if ((g1_alive && !g2_alive) || (!g1_alive && g2_alive)) {
+            uint8_t current_safety = safety_value[p][g1][g2][power_state];
+            if (current_safety == 1 && last_ghost_caught > 0) {
+                cout << "Pacman wins! Captured ghost #" << last_ghost_caught << endl;
+                break;
+            }
+        }
+
         // Check lose condition
-        bool caught = (!is_powered(power_state)) && 
+        bool caught = (!is_powered(power_state)) &&
                       ((g1_alive && p == g1) || (g2_alive && p == g2));
         if (caught) {
             cout << "Game over - Pacman caught at step " << step-1 << "!" << endl;
             break;
         }
-        
+
         // Get optimal moves
         PacmanMoveResult move = get_optimal_pacman_move(p, g1, g2, power_state);
-        
+
         // Check for eating pellet
         if (power_state == PELLET_EXISTS && move.pos1 == pellet_pos) {
             cout << ">>> Pacman eats the super pellet! <<<" << endl;
             move.new_power = power_duration;
         }
-        
+
         bool will_be_powered = is_powered(move.new_power);
-        
+
         // Display Pacman's move(s)
         if (will_be_powered && move.pos1 != move.pos2) {
-            cout << "Pacman moves: " << p << " -> " << move.pos1 << " -> " << move.pos2 
+            cout << "Pacman moves: " << p << " -> " << move.pos1 << " -> " << move.pos2
                  << " (double move!)" << endl;
         } else {
             cout << "Pacman moves: " << p << " -> " << move.pos1 << endl;
         }
-        
+
+        // Display Ghost moves
+        if (g1_alive) {
+            cout << "Ghost 1 moves: " << g1 << " -> " << move.new_g1 << endl;
+        } else {
+            cout << "Ghost 1 moves: DEAD" << endl;
+        }
+        if (g2_alive) {
+            cout << "Ghost 2 moves: " << g2 << " -> " << move.new_g2 << endl;
+        } else {
+            cout << "Ghost 2 moves: DEAD" << endl;
+        }
+
         // Check for ghost eating on first move (before ghosts move)
         if (will_be_powered) {
             if (g1_alive && move.pos1 == g1) {
                 cout << ">>> Pacman eats Ghost 1 on first move! <<<" << endl;
                 move.new_g1 = DEAD;
+                last_ghost_caught = 1;
             }
             if (g2_alive && move.pos1 == g2) {
                 cout << ">>> Pacman eats Ghost 2 on first move! <<<" << endl;
                 move.new_g2 = DEAD;
+                last_ghost_caught = 2;
             }
         }
-        
+
         // Check for ghost eating on second move (after ghosts move)
         g1_alive = (move.new_g1 != DEAD);
         g2_alive = (move.new_g2 != DEAD);
-        
+
         if (will_be_powered) {
             // Check if Pacman catches ghost on second move (after ghosts move)
             bool catch1_move2 = g1_alive && (move.pos2 == move.new_g1);
             bool catch2_move2 = g2_alive && (move.pos2 == move.new_g2);
-            
+
             // Check for clipping on second move
             bool clip1 = g1_alive && (move.pos1 == move.new_g1 && g1 == move.pos2);
             bool clip2 = g2_alive && (move.pos1 == move.new_g2 && g2 == move.pos2);
-            
+
             if (catch1_move2 || clip1) {
                 cout << ">>> Pacman eats Ghost 1 on second move! <<<" << endl;
                 move.new_g1 = DEAD;
+                last_ghost_caught = 1;
             }
             if (catch2_move2 || clip2) {
                 cout << ">>> Pacman eats Ghost 2 on second move! <<<" << endl;
                 move.new_g2 = DEAD;
+                last_ghost_caught = 2;
             }
         }
-        
+
         // Check for collision when not powered
         bool collision = false;
         if (!will_be_powered) {
@@ -609,37 +670,50 @@ void simulate_optimal_play(int start_p, int start_g1, int start_g2, int max_step
             bool collide2 = g2_alive && (move.pos1 == move.new_g2 || clip2);
             collision = collide1 || collide2;
         }
-        
+
         // Decrement power timer
         int new_power = move.new_power;
         if (is_powered(new_power)) {
             new_power = decrement_power(new_power);
         }
-        
+
         // Update state
         p = move.pos2;  // Final position after both moves
         g1 = move.new_g1;
         g2 = move.new_g2;
         power_state = new_power;
-        
+
         print_game_state(p, g1, g2, power_state, step);
-        
+
         // Check win/lose after move
         g1_alive = (g1 != DEAD);
         g2_alive = (g2 != DEAD);
-        
+
         if (!g1_alive && !g2_alive) {
-            cout << "PACMAN WINS! Both ghosts eliminated!" << endl;
+            if (last_ghost_caught > 0) {
+                cout << "Pacman wins! Captured ghost #" << last_ghost_caught << endl;
+            } else {
+                cout << "PACMAN WINS! Both ghosts eliminated!" << endl;
+            }
             break;
         }
-        
+
+        // Check if one ghost caught and Pacman has won (safety=1)
+        if ((g1_alive && !g2_alive) || (!g1_alive && g2_alive)) {
+            uint8_t current_safety = safety_value[p][g1][g2][power_state];
+            if (current_safety == 1 && last_ghost_caught > 0) {
+                cout << "Pacman wins! Captured ghost #" << last_ghost_caught << endl;
+                break;
+            }
+        }
+
         // Check if Pacman was caught (collision when not powered)
         if (collision) {
             cout << "COLLISION: Pacman caught by ghost!" << endl;
             cout << "Game over - Pacman caught at step " << step << "!" << endl;
             break;
         }
-        
+
         cout << "State value: Safety=" << (int)safety_value[p][g1][g2][power_state]
              << ", TTR_G=" << (int)ttr_g_value[p][g1][g2][power_state]
              << ", TTR_P=" << (int)ttr_p_value[p][g1][g2][power_state] << endl;
@@ -667,7 +741,7 @@ int main(int argc, char* argv[]) {
     int start_g1 = 22;
     int start_g2 = 58;
     int max_steps = 100;
-    
+
     for (int i = 1; i < argc; i++) {
         string arg = argv[i];
         if ((arg == "-v" || arg == "--values") && i + 1 < argc) {
@@ -689,24 +763,24 @@ int main(int argc, char* argv[]) {
             return 1;
         }
     }
-    
+
     if (values_file.empty()) {
         cerr << "Error: Values file is required" << endl << endl;
         print_usage(argv[0]);
         return 1;
     }
-    
+
     cout << "=== Pacman Simulation (Super Pellet) ===" << endl;
     cout << "Loading values from " << values_file << "..." << endl;
-    
+
     if (!load_values(values_file)) {
         return 1;
     }
-    
+
     cout << "Maze: " << MAZE_ROWS << "x" << MAZE_COLS << endl;
     cout << "Pellet position: " << pellet_pos << endl;
     cout << endl;
-    
+
     // Validate positions
     if (!is_valid_pos(start_p)) {
         cerr << "Error: Invalid Pacman position " << start_p << endl;
@@ -720,9 +794,9 @@ int main(int argc, char* argv[]) {
         cerr << "Error: Invalid Ghost2 position " << start_g2 << endl;
         return 1;
     }
-    
+
     simulate_optimal_play(start_p, start_g1, start_g2, max_steps);
-    
+
     return 0;
 }
 

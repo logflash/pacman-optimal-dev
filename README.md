@@ -24,7 +24,7 @@ State space: `[pacman_pos][ghost1][ghost2][power_state]`
 
 ```bash
 cd value_iteration
-mkdir build && cd build
+mkdir -p build && cd build
 cmake .. && make
 ```
 

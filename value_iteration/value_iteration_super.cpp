@@ -38,7 +38,7 @@ using namespace std::chrono;
 // POWER_STATES = power_duration + 2
 #define MAX_POWER_STATES (MAX_POWER_DURATION + 2)
 
-int power_duration = 10;  // Default, can be set via command line
+int power_duration = 6;  // Default, can be set via command line
 
 uint32_t maze[MAZE_ROWS] = {
     0b000000000000,
@@ -126,10 +126,10 @@ void print_progress(int iter, int max_iters, double elapsed_sec, bool converged)
     double progress = (double)(iter + 1) / max_iters;
     int bar_width = 40;
     int filled = (int)(progress * bar_width);
-    
+
     double time_per_iter = elapsed_sec / (iter + 1);
     double remaining_sec = time_per_iter * (max_iters - iter - 1);
-    
+
     cout << "\r[";
     for (int i = 0; i < bar_width; i++) {
         if (i < filled) cout << "=";
@@ -139,7 +139,7 @@ void print_progress(int iter, int max_iters, double elapsed_sec, bool converged)
     cout << "] ";
     cout << setw(4) << (iter + 1) << "/" << max_iters << " ";
     cout << "Elapsed: " << fixed << setprecision(1) << elapsed_sec << "s ";
-    
+
     if (!converged) {
         cout << "ETA: " << fixed << setprecision(1) << remaining_sec << "s ";
     } else {
@@ -150,10 +150,10 @@ void print_progress(int iter, int max_iters, double elapsed_sec, bool converged)
 
 void run_value_iteration() {
     cout << "Initializing value tables..." << endl;
-    cout << "DEBUG: power_duration=" << power_duration 
-         << ", power_states()=" << power_states() 
+    cout << "DEBUG: power_duration=" << power_duration
+         << ", power_states()=" << power_states()
          << ", power_expired()=" << power_expired() << endl;
-    
+
     // Initialize all states
     #pragma omp parallel for collapse(3)
     for (int p = 0; p < MAZE_CELLS; p++) {
@@ -164,77 +164,86 @@ void run_value_iteration() {
                     if (g1 == DEAD && g2 == DEAD) {
                         safety_value[p][g1][g2][pw] = 1;
                         ttr_g_value[p][g1][g2][pw] = 255;  // Ghosts can never catch Pacman
-                        ttr_p_value[p][g1][g2][pw] = 0;    // Already caught all ghosts
+                        ttr_p_value[p][g1][g2][pw] = 0;    // Already caught at least one ghost
                         continue;
                     }
-                    
+
+                    // At least one ghost caught
+                    if (g1 == DEAD || g2 == DEAD) {
+                        ttr_p_value[p][g1][g2][pw] = 0;  // Already caught at least one ghost
+                    }
+
                     // Check for collision (Pacman caught by ghost)
                     bool g1_alive = (g1 != DEAD && is_valid_pos(g1));
                     bool g2_alive = (g2 != DEAD && is_valid_pos(g2));
                     bool collision = (g1_alive && p == g1) || (g2_alive && p == g2);
-                    
+
                     if (collision && !is_powered(pw)) {
                         // Pacman caught while not powered = lose
                         safety_value[p][g1][g2][pw] = 0;
                         ttr_g_value[p][g1][g2][pw] = 0;    // Ghosts already caught Pacman
-                        ttr_p_value[p][g1][g2][pw] = 255;  // Pacman can't catch ghosts (dead)
+                        if (g1 != DEAD && g2 != DEAD) {
+                            ttr_p_value[p][g1][g2][pw] = 255;  // Pacman can't catch ghosts (dead)
+                        }
                     } else {
                         // Default: assume safe, will be updated by iteration
                         safety_value[p][g1][g2][pw] = 1;
                         ttr_g_value[p][g1][g2][pw] = 255;  // Will be computed
-                        ttr_p_value[p][g1][g2][pw] = 255;  // Will be computed
+                        if (g1 != DEAD && g2 != DEAD) {
+                            ttr_p_value[p][g1][g2][pw] = 255;  // Will be computed
+                        }
                     }
                 }
             }
         }
     }
-    
+
     cout << "Running value iteration..." << endl;
-    
+
     const int MAX_ITERS = 1000;
     bool converged;
     auto start_time = high_resolution_clock::now();
-    
+
     for (int iter = 0; iter < MAX_ITERS; iter++) {
         converged = true;
-        
+
         #pragma omp parallel for collapse(2) schedule(dynamic) reduction(&&:converged)
         for (int p = 0; p < MAZE_CELLS; p++) {
             for (int g1 = 0; g1 < GHOST_STATES; g1++) {
                 if (!is_valid_pos(p)) continue;
                 if (g1 != DEAD && !is_valid_pos(g1)) continue;
-                
+
                 for (int g2 = 0; g2 < GHOST_STATES; g2++) {
                     if (g2 != DEAD && !is_valid_pos(g2)) continue;
-                    
+
                     for (int pw = 0; pw < power_states(); pw++) {
                         // Skip terminal states
                         if (g1 == DEAD && g2 == DEAD) continue;
-                        
+
                         bool g1_alive = (g1 != DEAD);
                         bool g2_alive = (g2 != DEAD);
                         bool powered = is_powered(pw);
-                        
+
                         // Check current collision
                         bool collision = (g1_alive && p == g1) || (g2_alive && p == g2);
                         if (collision && !powered) {
                             // Already set to lose
                             continue;
                         }
-                        
+
                         // Get Pacman's possible moves
                         int pac_neighbors[4], pac_n;
                         get_neighbors(p, pac_neighbors, pac_n);
                         if (pac_n == 0) continue;
-                        
+
                         uint8_t best_safety = 0;
                         uint8_t best_ttr_g = 0;    // Max time until ghosts catch Pacman (Pacman maximizes)
                         uint8_t best_ttr_p = 255;  // Min time for Pacman to catch all ghosts (Pacman minimizes)
-                        
+
                         // Get ghost moves (only for alive ghosts)
                         int g1_neighbors[4], g1_n = 0;
                         int g2_neighbors[4], g2_n = 0;
-                        
+
                         if (g1_alive) {
                             get_neighbors(g1, g1_neighbors, g1_n);
                             if (g1_n == 0) continue;
@@ -243,24 +252,24 @@ void run_value_iteration() {
                             get_neighbors(g2, g2_neighbors, g2_n);
                             if (g2_n == 0) continue;
                         }
-                        
+
                         // If no ghosts alive, this shouldn't happen (terminal)
                         if (!g1_alive && !g2_alive) continue;
-                        
+
                         int g1_moves = g1_alive ? g1_n : 1;
                         int g2_moves = g2_alive ? g2_n : 1;
-                        
+
                         // Pacman chooses move to maximize value
                         for (int pi = 0; pi < pac_n; pi++) {
                             int np1 = pac_neighbors[pi];
-                            
+
                             // Compute power state after Pacman's first move
                             int pw_after_move1 = pw;
                             if (pw == PELLET_EXISTS && np1 == pellet_pos) {
                                 pw_after_move1 = power_duration;  // Pacman eats pellet
                             }
                             bool will_be_powered = is_powered(pw_after_move1);
-                            
+
                             // If powered: Pacman moves twice. Otherwise: single move.
                             int pac_neighbors2[5], pac_n2;
                             if (will_be_powered) {
@@ -270,47 +279,63 @@ void run_value_iteration() {
                                 pac_n2 = 1;
                                 pac_neighbors2[0] = np1;  // Only one move, np2 == np1
                             }
-                            
+
                             for (int pi2 = 0; pi2 < pac_n2; pi2++) {
                                 int np2 = pac_neighbors2[pi2];
-                                
+
                                 uint8_t worst_safety = 1;
                                 uint8_t worst_ttr_g = 255;  // Ghosts minimize (catch Pacman faster)
                                 uint8_t worst_ttr_p = 0;    // Ghosts maximize (delay being caught)
-                                
+
+                                // For powered mode: check if ghosts are caught on Pacman's first move
+                                // If so, they don't get to move on the second (simultaneous) move
+                                bool g1_caught_move1 = will_be_powered && g1_alive && (np1 == g1);
+                                bool g2_caught_move1 = will_be_powered && g2_alive && (np1 == g2);
+
+                                // Adjust iteration: ghosts caught on move 1 have no valid moves
+                                int g1_iter_count = g1_caught_move1 ? 1 : g1_moves;
+                                int g2_iter_count = g2_caught_move1 ? 1 : g2_moves;
+
                                 // Iterate over ghost move combinations
-                                for (int gi1 = 0; gi1 < g1_moves; gi1++) {
-                                    for (int gi2 = 0; gi2 < g2_moves; gi2++) {
-                                        int ng1 = g1_alive ? g1_neighbors[gi1] : DEAD;
-                                        int ng2 = g2_alive ? g2_neighbors[gi2] : DEAD;
-                                        
+                                for (int gi1 = 0; gi1 < g1_iter_count; gi1++) {
+                                    for (int gi2 = 0; gi2 < g2_iter_count; gi2++) {
+                                        // Ghosts caught on move 1 are already DEAD for move 2
+                                        int ng1 = g1_caught_move1 ? DEAD : (g1_alive ? g1_neighbors[gi1] : DEAD);
+                                        int ng2 = g2_caught_move1 ? DEAD : (g2_alive ? g2_neighbors[gi2] : DEAD);
+
                                         // Determine outcome of this move combination
                                         int final_g1 = ng1;
                                         int final_g2 = ng2;
                                         int final_pw = pw_after_move1;
                                         bool pacman_dies = false;
                                         bool pacman_catches = false;
-                                        
+
                                         if (will_be_powered) {
-                                            // Powered: Pacman moves twice, can eat ghosts
-                                            // Check if Pacman catches ghost on first move
-                                            bool catch1_move1 = g1_alive && (np1 == g1);
-                                            bool catch2_move1 = g2_alive && (np1 == g2);
-                                            
-                                            // Check if Pacman catches ghost on second move (after ghosts move)
-                                            bool catch1_move2 = g1_alive && (np2 == ng1);
-                                            bool catch2_move2 = g2_alive && (np2 == ng2);
-                                            
-                                            // Check for clipping on second move (Pacman and ghost swap)
-                                            bool clip1 = g1_alive && (np1 == ng1 && g1 == np2);
-                                            bool clip2 = g2_alive && (np1 == ng2 && g2 == np2);
-                                            
-                                            // Pacman eats ghosts
-                                            if (catch1_move1 || catch1_move2 || clip1) {
+                                            // Powered: Pacman moves twice
+                                            // First move: Pacman moves to np1, ghosts stay at g1/g2
+                                            // Second move: Pacman moves to np2 SIMULTANEOUSLY with ghosts moving to ng1/ng2
+
+                                            // Ghosts caught on first move are already handled above (ng1/ng2 = DEAD)
+                                            bool g1_alive_after_move1 = g1_alive && !g1_caught_move1;
+                                            bool g2_alive_after_move1 = g2_alive && !g2_caught_move1;
+
+                                            // Second move is simultaneous: Pacman goes np1->np2, ghosts go g1->ng1, g2->ng2
+                                            // But we need to check if ghosts that survived move 1 are caught on move 2
+
+                                            // Check if Pacman catches ghost on second move (simultaneous collision)
+                                            bool catch1_move2 = g1_alive_after_move1 && (np2 == ng1);
+                                            bool catch2_move2 = g2_alive_after_move1 && (np2 == ng2);
+
+                                            // Check for clipping on second move (Pacman and ghost swap positions)
+                                            bool clip1 = g1_alive_after_move1 && (np1 == ng1 && g1 == np2);
+                                            bool clip2 = g2_alive_after_move1 && (np1 == ng2 && g2 == np2);
+
+                                            // Determine final ghost states
+                                            if (g1_caught_move1 || catch1_move2 || clip1) {
                                                 final_g1 = DEAD;
                                                 pacman_catches = true;
                                             }
-                                            if (catch2_move1 || catch2_move2 || clip2) {
+                                            if (g2_caught_move1 || catch2_move2 || clip2) {
                                                 final_g2 = DEAD;
                                                 pacman_catches = true;
                                             }
@@ -319,55 +344,69 @@ void run_value_iteration() {
                                             // Check for clipping (position swap)
                                             bool clip1 = g1_alive && (p == ng1 && g1 == np1);
                                             bool clip2 = g2_alive && (p == ng2 && g2 == np1);
-                                            
+
                                             // Check collisions after movement
                                             bool collide1 = g1_alive && (np1 == ng1 || clip1);
                                             bool collide2 = g2_alive && (np1 == ng2 || clip2);
-                                            
+
                                             if (collide1 || collide2) {
                                                 pacman_dies = true;
                                             }
                                         }
-                                        
+
                                         // Decrement power timer for next state
                                         if (is_powered(final_pw)) {
                                             final_pw = decrement_power(final_pw);
                                         }
-                                        
+
                                         uint8_t s, tg, tp;
                                         if (pacman_dies) {
                                             s = 0;
                                             tg = 0;    // Ghosts caught Pacman now
                                             tp = 255;  // Pacman can't catch ghosts (dead)
-                                        } else if (final_g1 == DEAD && final_g2 == DEAD) {
-                                            // Pacman wins!
-                                            s = 1;
-                                            tg = 255;  // Ghosts can never catch Pacman
-                                            tp = 0;    // Pacman caught all ghosts now
+                                        } else if (final_g1 == DEAD || final_g2 == DEAD) {
+                                            // Pacman caught at least one ghost!
+                                            tp = 0;    // Already caught at least one ghost
+                                            if (final_g1 == DEAD && final_g2 == DEAD) {
+                                                // Both ghosts dead
+                                                s = 1;
+                                                tg = 255;  // Ghosts can never catch Pacman
+                                            } else {
+                                                // One ghost dead, one still alive
+                                                s = safety_value[np2][final_g1][final_g2][final_pw];
+                                                tg = ttr_g_value[np2][final_g1][final_g2][final_pw];
+                                                // Ensure ttr_p is 0 for any state with a dead ghost
+                                                tp = 0;
+                                            }
                                         } else {
                                             s = safety_value[np2][final_g1][final_g2][final_pw];
                                             tg = ttr_g_value[np2][final_g1][final_g2][final_pw];
                                             tp = ttr_p_value[np2][final_g1][final_g2][final_pw];
                                         }
-                                        
+
                                         // Ghosts minimize Pacman's values
                                         worst_safety = min(worst_safety, s);
                                         worst_ttr_g = min(worst_ttr_g, tg);  // Ghosts minimize survival time
                                         worst_ttr_p = max(worst_ttr_p, tp);  // Ghosts maximize time until caught
                                     }
                                 }
-                                
+
                                 // Pacman maximizes safety and TTR_G, minimizes TTR_P
                                 best_safety = max(best_safety, worst_safety);
-                                
+
                                 uint8_t new_ttr_g = (worst_ttr_g >= 255) ? 255 : (worst_ttr_g + 1);
                                 best_ttr_g = max(best_ttr_g, new_ttr_g);  // Pacman maximizes survival
-                                
+
                                 uint8_t new_ttr_p = (worst_ttr_p >= 255) ? 255 : (worst_ttr_p + 1);
                                 best_ttr_p = min(best_ttr_p, new_ttr_p);  // Pacman minimizes time to catch
                             }
                         }
-                        
+
+                        // Enforce ttr_p = 0 for any state with a dead ghost
+                        if (g1 == DEAD || g2 == DEAD) {
+                            best_ttr_p = 0;
+                        }
+
                         if (best_safety != safety_value[p][g1][g2][pw] ||
                             best_ttr_g != ttr_g_value[p][g1][g2][pw] ||
                             best_ttr_p != ttr_p_value[p][g1][g2][pw]) {
@@ -380,11 +419,11 @@ void run_value_iteration() {
                 }
             }
         }
-        
+
         auto now = high_resolution_clock::now();
         double elapsed = duration_cast<milliseconds>(now - start_time).count() / 1000.0;
         print_progress(iter, MAX_ITERS, elapsed, converged);
-        
+
         if (converged) {
             cout << endl;
             break;
@@ -411,7 +450,7 @@ bool save_values(const string& filename) {
         cerr << "Error: Could not open " << filename << " for writing" << endl;
         return false;
     }
-    
+
     // Write header
     ValueFileHeaderSuper header;
     memcpy(header.magic, "PVAS", 4);
@@ -423,17 +462,17 @@ bool save_values(const string& filename) {
     header.power_duration = power_duration;
     header.pellet_pos = pellet_pos;
     memset(header.reserved, 0, sizeof(header.reserved));
-    
+
     file.write(reinterpret_cast<char*>(&header), sizeof(header));
-    
+
     // Write maze data
     file.write(reinterpret_cast<char*>(maze), sizeof(maze));
-    
+
     // Write value data: safety, TTR_G (ghost catch time), TTR_P (Pacman catch time)
     file.write(reinterpret_cast<char*>(safety_value), sizeof(safety_value));
     file.write(reinterpret_cast<char*>(ttr_g_value), sizeof(ttr_g_value));
     file.write(reinterpret_cast<char*>(ttr_p_value), sizeof(ttr_p_value));
-    
+
     file.close();
     return true;
 }
@@ -442,11 +481,11 @@ void print_statistics() {
     int safe_count = 0;
     int unsafe_count = 0;
     int total_valid = 0;
-    
+
     // Also check one-ghost-dead states
     int safe_one_dead = 0;
     int total_one_dead = 0;
-    
+
     // Only count states where pellet exists (initial game state)
     for (int p = 0; p < MAZE_CELLS; p++) {
         if (!is_valid_pos(p)) continue;
@@ -455,7 +494,7 @@ void print_statistics() {
             for (int g2 = 0; g2 < MAZE_CELLS; g2++) {
                 if (!is_valid_pos(g2)) continue;
                 if (p == g1 || p == g2) continue;
-                
+
                 total_valid++;
                 if (safety_value[p][g1][g2][PELLET_EXISTS] == 1) {
                     safe_count++;
@@ -465,14 +504,14 @@ void print_statistics() {
             }
         }
     }
-    
+
     // Check one-ghost-dead states with max power
     for (int p = 0; p < MAZE_CELLS; p++) {
         if (!is_valid_pos(p)) continue;
         for (int g = 0; g < MAZE_CELLS; g++) {
             if (!is_valid_pos(g)) continue;
             if (p == g) continue;
-            
+
             // Ghost1 dead, Ghost2 alive, powered
             total_one_dead++;
             if (safety_value[p][DEAD][g][power_duration] == 1) {
@@ -485,20 +524,20 @@ void print_statistics() {
             }
         }
     }
-    
+
     cout << "\nDEBUG: One ghost dead, powered states: " << safe_one_dead << "/" << total_one_dead << " safe" << endl;
-    
+
     cout << "\n=== Statistics (pellet exists, both ghosts alive) ===" << endl;
     cout << "Total valid states: " << total_valid << endl;
-    cout << "Safe (Pacman can win): " << safe_count 
+    cout << "Safe (Pacman can win): " << safe_count
          << " (" << fixed << setprecision(2) << (100.0 * safe_count / total_valid) << "%)" << endl;
-    cout << "Unsafe (ghosts win): " << unsafe_count 
+    cout << "Unsafe (ghosts win): " << unsafe_count
          << " (" << fixed << setprecision(2) << (100.0 * unsafe_count / total_valid) << "%)" << endl;
 }
 
 int main(int argc, char* argv[]) {
     string output_file = "values_super_12x12.bin";
-    
+
     // Parse command line arguments
     for (int i = 1; i < argc; i++) {
         string arg = argv[i];
@@ -518,47 +557,48 @@ int main(int argc, char* argv[]) {
             return 0;
         }
     }
-    
+
     // Validate pellet position
     if (!is_valid_pos(pellet_pos)) {
         cerr << "Error: Invalid pellet position " << pellet_pos << endl;
         return 1;
     }
-    
+
     // Validate power duration
     if (power_duration < 1 || power_duration > MAX_POWER_DURATION) {
         cerr << "Error: Power duration must be between 1 and " << MAX_POWER_DURATION << endl;
         return 1;
     }
-    
+
     cout << "=== Pacman Value Iteration (Super Pellet) ===" << endl;
     cout << "Maze: " << MAZE_ROWS << "x" << MAZE_COLS << endl;
     cout << "Ghosts: 2 (with permadeath)" << endl;
-    cout << "Super pellet: position " << pellet_pos 
+    cout << "Super pellet: position " << pellet_pos
          << " [" << row(pellet_pos) << "," << col(pellet_pos) << "]" << endl;
     cout << "Power duration: " << power_duration << " turns" << endl;
     cout << "Output: " << output_file << endl;
     cout << endl;
-    
+
     size_t table_size = sizeof(safety_value) + sizeof(ttr_g_value) + sizeof(ttr_p_value);
     cout << "Value table size: " << (table_size / 1024 / 1024) << " MB" << endl;
     cout << endl;
-    
+
     auto start = high_resolution_clock::now();
     run_value_iteration();
     auto end = high_resolution_clock::now();
     auto duration = duration_cast<milliseconds>(end - start);
-    
+
     cout << "\nTotal computation time: " << (duration.count() / 1000.0) << " s" << endl;
-    
+
     print_statistics();
-    
+
     cout << "\nSaving values to " << output_file << "..." << endl;
     if (!save_values(output_file)) {
         return 1;
     }
-    
+
     cout << "Done!" << endl;
+
     return 0;
 }
 
