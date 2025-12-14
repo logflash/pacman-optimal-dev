@@ -30,3 +30,35 @@ target_link_libraries(value_iteration_super PRIVATE OpenMP::OpenMP_CXX)
 add_executable(simulation_super
     simulation_super.cpp
 )
+
+# === Multi-pellet version ===
+
+# Value iteration with multiple super pellets (1-4)
+add_executable(value_iteration_multi
+    value_iteration_multi.cpp
+)
+target_link_libraries(value_iteration_multi PRIVATE OpenMP::OpenMP_CXX)
+
+# === Optimized multi-pellet version ===
+
+find_package(ZLIB REQUIRED)
+
+# Optimized value iteration with compact encoding + compression
+add_executable(value_iteration_opt
+    value_iteration_multi_opt.cpp
+)
+target_link_libraries(value_iteration_opt PRIVATE OpenMP::OpenMP_CXX ZLIB::ZLIB)
+
+# Simulation for optimized multi-pellet
+add_executable(simulation_opt
+    simulation_multi_opt.cpp
+)
+target_link_libraries(simulation_opt PRIVATE ZLIB::ZLIB)
+
+# === Analysis tools ===
+
+# Value analysis tool - generates statistics and exports CSVs
+add_executable(analyze_values
+    analyze_values.cpp
+)
+target_link_libraries(analyze_values PRIVATE ZLIB::ZLIB)
