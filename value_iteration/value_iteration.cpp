@@ -15,6 +15,7 @@ using namespace std::chrono;
 
 #define MAZE_ROWS 12
 #define MAZE_COLS 12
+#define SCARED_STEPS 6
 #define MAZE_CELLS (MAZE_ROWS * MAZE_COLS)
 
 uint32_t maze[MAZE_ROWS] = {
@@ -49,23 +50,22 @@ inline void get_neighbors(int idx, int* neighbors, int &count) {
             neighbors[count++] = nr*MAZE_COLS+nc;
         }
     }
-    // NOTE: Agents MUST move - they cannot stay in place
-    // If somehow stuck (no neighbors), this would be an error in maze design
 }
 
-uint8_t safety_value[MAZE_CELLS][MAZE_CELLS][MAZE_CELLS] = {0};
-uint8_t ttr_value[MAZE_CELLS][MAZE_CELLS][MAZE_CELLS] = {0};
+uint8_t safety_value[SCARED_STEPS+1][MAZE_CELLS][MAZE_CELLS][MAZE_CELLS] = {0};
+uint8_t ttr_value_g[SCARED_STEPS+1][MAZE_CELLS][MAZE_CELLS][MAZE_CELLS] = {0};  // Time for ghosts to reach Pacman
+uint8_t ttr_value_p[SCARED_STEPS+1][MAZE_CELLS][MAZE_CELLS][MAZE_CELLS] = {0};        // Time for Pacman to reach ghosts (no super pellets)
 
 // Progress bar helper
 void print_progress(int iter, int max_iters, double elapsed_sec, bool converged) {
     double progress = (double)(iter + 1) / max_iters;
     int bar_width = 40;
     int filled = (int)(progress * bar_width);
-    
+
     // Estimate time remaining
     double time_per_iter = elapsed_sec / (iter + 1);
     double remaining_sec = time_per_iter * (max_iters - iter - 1);
-    
+
     cout << "\r[";
     for (int i = 0; i < bar_width; i++) {
         if (i < filled) cout << "=";
@@ -75,7 +75,7 @@ void print_progress(int iter, int max_iters, double elapsed_sec, bool converged)
     cout << "] ";
     cout << setw(4) << (iter + 1) << "/" << max_iters << " ";
     cout << "Elapsed: " << fixed << setprecision(1) << elapsed_sec << "s ";
-    
+
     if (!converged) {
         cout << "ETA: " << fixed << setprecision(1) << remaining_sec << "s ";
     } else {
@@ -85,38 +85,43 @@ void print_progress(int iter, int max_iters, double elapsed_sec, bool converged)
 }
 
 void run_value_iteration() {
+    const int MAX_ITERS = 1000;
+    auto start_time = high_resolution_clock::now();
+
+    // Step 1: Solve scared_time = 0 with full value iteration
+    cout << "\nProcessing scared_time = 0 (full value iteration)" << endl;
+
     // Initial value function setup
     #pragma omp parallel for collapse(2)
     for (int p = 0; p < MAZE_CELLS; p++) {
         for (int g1 = 0; g1 < MAZE_CELLS; g1++) {
-            uint8_t* srow = safety_value[p][g1];
-            uint8_t* trow = ttr_value[p][g1];
+            uint8_t* srow = safety_value[0][p][g1];
+            uint8_t* trow_g = ttr_value_g[0][p][g1];
+            uint8_t* trow_p = ttr_value_p[0][p][g1];
 
-            if (p == g1) {
-                std::memset(srow, 0, MAZE_CELLS);
-                std::memset(trow, 0, MAZE_CELLS);
-            }
-            else {
-                std::memset(srow, 1, MAZE_CELLS);
-                std::memset(trow, 0xFF, MAZE_CELLS);
-                srow[p] = 0;
-                trow[p] = 0;
+            for(int g2 = 0; g2 < MAZE_CELLS; g2++) {
+                if(p == g1 || p == g2) {
+                    srow[g2] = 0;
+                    trow_g[g2] = 0;
+                    trow_p[g2] = 0;
+                } else {
+                    srow[g2] = 1;
+                    trow_g[g2] = 255;
+                    trow_p[g2] = 255;
+                }
             }
         }
     }
 
-    const int MAX_ITERS = 1000;
     bool converged;
-    auto start_time = high_resolution_clock::now();
-
     for(int iter=0; iter<MAX_ITERS; iter++){
         converged = true;
 
         #pragma omp parallel for collapse(2) schedule(dynamic) reduction(&&:converged)
         for(int p=0;p<MAZE_CELLS;p++){
             for(int g1=0;g1<MAZE_CELLS;g1++){
-                uint8_t* srow = safety_value[p][g1];
-                uint8_t* trow = ttr_value[p][g1];
+                uint8_t* srow = safety_value[0][p][g1];
+                uint8_t* trow_g = ttr_value_g[0][p][g1];
 
                 for(int g2=0; g2<MAZE_CELLS; g2++){
                     if(!is_free(row(p), col(p)) ||
@@ -127,68 +132,62 @@ void run_value_iteration() {
 
                     if(p==g1 || p==g2){
                         srow[g2] = 0;
-                        trow[g2] = 0;
+                        trow_g[g2] = 0;
                         continue;
                     }
 
                     int pac_neighbors[4], pac_n;
                     get_neighbors(p, pac_neighbors, pac_n);
-
-                    // Invalid state - agents must be able to move
                     if(pac_n==0) continue;
 
                     uint8_t best_safety = 0;
-                    uint8_t best_ttr = 0;
+                    uint8_t best_ttr_g = 0;
 
                     for(int pi=0; pi<pac_n; pi++){
                         int np = pac_neighbors[pi];
 
                         int g1_neighbors[4], g1_n;
                         get_neighbors(g1, g1_neighbors, g1_n);
-                        if(g1_n==0) continue; // Invalid state
+                        if(g1_n==0) continue;
 
                         int g2_neighbors[4], g2_n;
                         get_neighbors(g2, g2_neighbors, g2_n);
-                        if(g2_n==0) continue; // Invalid state
+                        if(g2_n==0) continue;
 
                         uint8_t worst_safety = 1;
-                        uint8_t worst_ttr = 255;
+                        uint8_t worst_ttr_g = 255;
 
                         for(int gi1=0; gi1<g1_n; gi1++){
                             for(int gi2=0; gi2<g2_n; gi2++){
                                 int ng1 = g1_neighbors[gi1];
                                 int ng2 = g2_neighbors[gi2];
 
-                                // Check for clipping/collision during movement:
-                                // 1. Position swapping: Pacman and ghost trade places
                                 bool clipping = (p == ng1 && g1 == np) ||
                                     (p == ng2 && g2 == np);
 
-                                // If clipping occurs, treat as collision
-                                // (safety=0, ttr=0)
-                                uint8_t s, t;
+                                uint8_t s, t_g;
                                 if(clipping) {
                                     s = 0;
-                                    t = 0;
+                                    t_g = 0;
                                 } else {
-                                    s = safety_value[np][ng1][ng2];
-                                    t = ttr_value[np][ng1][ng2];
+                                    s = safety_value[0][np][ng1][ng2];
+                                    t_g = ttr_value_g[0][np][ng1][ng2];
                                 }
 
                                 worst_safety = min(worst_safety, s);
-                                worst_ttr = min(worst_ttr, t);
+                                worst_ttr_g = min(worst_ttr_g, t_g);
                             }
                         }
 
                         best_safety = max(best_safety, worst_safety);
-                        uint8_t new_ttr = (worst_ttr >= 255) ? 255 : (worst_ttr + 1);
-                        best_ttr = max(best_ttr, new_ttr);
+                        uint8_t new_ttr_g = (worst_ttr_g >= 255) ? 255 : (worst_ttr_g + 1);
+                        best_ttr_g = max(best_ttr_g, new_ttr_g);
                     }
 
-                    if(best_safety != srow[g2] || best_ttr != trow[g2]){
+                    if(best_safety != srow[g2] || best_ttr_g != trow_g[g2]){
                         converged = false;
                         srow[g2] = best_safety;
-                        trow[g2] = best_ttr;
+                        trow_g[g2] = best_ttr_g;
                     }
                 }
             }
@@ -203,13 +202,180 @@ void run_value_iteration() {
             break;
         }
     }
+
+
+    // Scared-mode value iteration (Pacman can move twice)
+    for (int scared_time = 1; scared_time <= SCARED_STEPS; scared_time++) {
+        cout << "Processing scared_time = " << scared_time << " / " << SCARED_STEPS << " (iterative update)" << endl;
+
+        // Initialize values for this scared_time level
+        #pragma omp parallel for collapse(2)
+        for (int p = 0; p < MAZE_CELLS; p++) {
+            for (int g1 = 0; g1 < MAZE_CELLS; g1++) {
+                uint8_t* srow = safety_value[scared_time][p][g1];
+                uint8_t* trow_g = ttr_value_g[scared_time][p][g1];
+                uint8_t* trow_p = ttr_value_p[scared_time][p][g1];
+                for(int g2 = 0; g2 < MAZE_CELLS; g2++) {
+                    if(p == g1 || p == g2) {
+                        // Caught states: Pacman caught a ghost
+                        srow[g2] = 1;  // Safe (ghost is caught)
+                        trow_g[g2] = 255;  // Ghosts can't catch Pacman anymore
+                        trow_p[g2] = 0;  // Already caught
+                    } else {
+                        // Non-caught states: initialize to unknown
+                        srow[g2] = 0;  // Will be computed
+                        trow_g[g2] = 0;  // Will be computed
+                        trow_p[g2] = 255;  // Initialize to "unknown/unreachable"
+                    }
+                }
+            }
+        }
+
+        bool converged;
+        const int MAX_ITERS_SCARED = 500;
+        int num_changes = 0;
+        int num_catches_found = 0;
+        for(int iter = 0; iter < MAX_ITERS_SCARED; iter++) {
+            converged = true;
+            num_changes = 0;
+            num_catches_found = 0;
+
+            #pragma omp parallel for collapse(2) schedule(dynamic) reduction(&&:converged)
+            for(int p = 0; p < MAZE_CELLS; p++) {
+                for(int g1 = 0; g1 < MAZE_CELLS; g1++){
+                    uint8_t* srow = safety_value[scared_time][p][g1];
+                    uint8_t* trow_g = ttr_value_g[scared_time][p][g1];
+                    uint8_t* trow_p = ttr_value_p[scared_time][p][g1];
+
+                    for(int g2 = 0; g2 < MAZE_CELLS; g2++){
+                        if(!is_free(row(p), col(p)) || !is_free(row(g1), col(g1)) || !is_free(row(g2), col(g2)))
+                            continue;
+                        if(p == g1 || p == g2){
+                            srow[g2] = 1;
+                            trow_g[g2] = 255;
+                            trow_p[g2] = 0;
+                            continue;
+                        }
+
+                        int pac_neighbors[4], pac_n;
+                        get_neighbors(p, pac_neighbors, pac_n);
+                        if(pac_n == 0) continue;
+
+                        uint8_t best_safety = 0;       // Pacman can be safe if any move works
+                        uint8_t best_ttr_g = 0;        // Max over worst-case ghost time
+                        uint8_t best_ttr_p = 255;      // Min steps for Pacman to reach a ghost
+
+                        // Pacman can move twice
+                        for(int pi1=0; pi1<pac_n; pi1++){
+                            int np1 = pac_neighbors[pi1];
+                            int pac_neighbors2[5], pac_n2;
+                            get_neighbors(np1, pac_neighbors2, pac_n2);
+                            pac_neighbors2[pac_n2++] = np1;  // stay option on move 2
+
+                            for(int pi2=0; pi2<pac_n2; pi2++){
+                                int np2 = pac_neighbors2[pi2];
+
+                                int g1_neighbors[4], g1_n; get_neighbors(g1, g1_neighbors, g1_n);
+                                int g2_neighbors[4], g2_n; get_neighbors(g2, g2_neighbors, g2_n);
+
+                                uint8_t worst_safe_for_combo = 1;  // Ghosts minimize safety
+                                uint8_t worst_ttr_g_for_combo = 255;
+                                uint8_t worst_ttr_p_for_combo = 0;
+
+                                for(int gi1=0; gi1<g1_n; gi1++){
+                                    for(int gi2=0; gi2<g2_n; gi2++){
+                                        int ng1 = g1_neighbors[gi1];
+                                        int ng2 = g2_neighbors[gi2];
+
+                                        bool pacman_catches_first_move = (np1 == g1 || np1 == g2);
+                                        bool pacman_catches_second_move = (np2 == ng1 || np2 == ng2);
+                                        bool pacman_clipped  = (np1 == ng1 && g1 == np2) || (np1 == ng2 && g2 == np2);
+
+                                        bool pacman_catches = pacman_catches_first_move || pacman_catches_second_move;
+
+                                        uint8_t s, t_g, t_p;
+                                        if(pacman_catches || pacman_clipped){
+                                            // Ghost gets caught
+                                            s = (scared_time > 1) ? safety_value[scared_time - 1][np2][ng1][ng2] : 1;
+                                            t_p = 0;  // Ghost gets caught
+                                            // For TTR_G
+                                            t_g = (scared_time > 1) ? ttr_value_g[scared_time - 1][np2][ng1][ng2] : 255;
+                                            if(iter == 0) num_catches_found++;
+                                        } else {
+                                            // Normal state transition - look up values from next state
+                                            s   = safety_value[scared_time - 1][np2][ng1][ng2];
+                                            t_g = ttr_value_g[scared_time - 1][np2][ng1][ng2];
+                                            t_p = ttr_value_p[scared_time - 1][np2][ng1][ng2];
+                                        }
+
+                                        // For scared mode: ghosts minimize safety, maximize TTR values
+                                        worst_safe_for_combo = min(worst_safe_for_combo, s);
+                                        worst_ttr_g_for_combo = min(worst_ttr_g_for_combo, t_g);
+                                        worst_ttr_p_for_combo = max(worst_ttr_p_for_combo, t_p);
+                                    }
+                                }
+
+                                best_safety = max(best_safety, worst_safe_for_combo);
+
+                                uint8_t new_ttr_g = (worst_ttr_g_for_combo >= 255) ? 255 : (worst_ttr_g_for_combo + 1);
+                                best_ttr_g = max(best_ttr_g, new_ttr_g);
+
+                                uint8_t new_ttr_p = (worst_ttr_p_for_combo >= 255) ? 255 : (worst_ttr_p_for_combo + 1);
+                                best_ttr_p = min(best_ttr_p, new_ttr_p);
+                            }
+                        }
+
+                        if(srow[g2] != best_safety || trow_g[g2] != best_ttr_g || trow_p[g2] != best_ttr_p){
+                            srow[g2] = best_safety;
+                            trow_g[g2] = best_ttr_g;
+                            trow_p[g2] = best_ttr_p;
+                            converged = false;
+                            num_changes++;
+                        }
+                    }
+                }
+            }
+
+            if(iter % 10 == 0 || converged) {
+                if(iter == 0) {
+                    cout << "  Iteration " << iter << ", changes=" << num_changes << ", catches=" << num_catches_found << "\r" << flush;
+                } else {
+                    cout << "  Iteration " << iter << ", changes=" << num_changes << (converged ? " (CONVERGED)" : "") << "\r" << flush;
+                }
+            }
+            if(converged) {
+                cout << endl;
+                break;
+            }
+        }
+
+        // Debug: Count how many states have finite TTR_P values
+        int finite_count = 0, caught_count = 0, intermediate_count = 0, total_count = 0;
+        for(int p = 0; p < MAZE_CELLS; p++) {
+            for(int g1 = 0; g1 < MAZE_CELLS; g1++) {
+                for(int g2 = 0; g2 < MAZE_CELLS; g2++) {
+                    if(is_free(row(p), col(p)) && is_free(row(g1), col(g1)) && is_free(row(g2), col(g2))) {
+                        total_count++;
+                        uint8_t val = ttr_value_p[scared_time][p][g1][g2];
+                        if(val < 255) {
+                            finite_count++;
+                            if(val == 0) caught_count++;
+                            else intermediate_count++;
+                        }
+                    }
+                }
+            }
+        }
+        cout << "  TTR_P: finite=" << finite_count << " (caught=" << caught_count << ", intermediate=" << intermediate_count << "), infinite=" << (total_count - finite_count) << endl;
+    }
+
 }
 
 // Binary file header structure
 struct ValueFileHeader {
     char magic[4];          // "PVAL" for Pacman Value
     uint8_t version;        // File format version
-    uint8_t value_type;     // 0 = safety, 1 = TTR
+    uint8_t value_type;     // 0 = safety, 1 = TTR_g, 2 = TTR_p
     uint16_t maze_rows;
     uint16_t maze_cols;
     uint8_t num_ghosts;
@@ -241,8 +407,10 @@ bool save_values(const string& filename, uint8_t value_type) {
     // Write value data
     if (value_type == 0) {
         file.write(reinterpret_cast<char*>(safety_value), sizeof(safety_value));
-    } else {
-        file.write(reinterpret_cast<char*>(ttr_value), sizeof(ttr_value));
+    } else if (value_type == 1) {
+        file.write(reinterpret_cast<char*>(ttr_value_g), sizeof(ttr_value_g));
+    } else if (value_type == 2) {
+        file.write(reinterpret_cast<char*>(ttr_value_p), sizeof(ttr_value_p));
     }
 
     file.close();
@@ -250,21 +418,25 @@ bool save_values(const string& filename, uint8_t value_type) {
 }
 
 int main(int argc, char* argv[]) {
-    string safety_file = "safety_12x12_2ghosts.bin";
-    string ttr_file = "ttr_12x12_2ghosts.bin";
+    string safety_file = "safety_0000.bin";
+    string ttr_file_g = "g_ttr_0000.bin";
+    string ttr_file_p = "p_ttr_0000.bin";
 
     // Parse command line arguments
     for (int i = 1; i < argc; i++) {
         string arg = argv[i];
         if ((arg == "-s" || arg == "--safety") && i + 1 < argc) {
             safety_file = argv[++i];
-        } else if ((arg == "-t" || arg == "--ttr") && i + 1 < argc) {
-            ttr_file = argv[++i];
+        } else if ((arg == "-g" || arg == "--ttr-g") && i + 1 < argc) {
+            ttr_file_g = argv[++i];
+        } else if ((arg == "-p" || arg == "--ttr-p") && i + 1 < argc) {
+            ttr_file_p = argv[++i];
         } else if (arg == "-h" || arg == "--help") {
             cout << "Usage: " << argv[0] << " [options]" << endl;
             cout << "Options:" << endl;
-            cout << "  -s, --safety FILE   Output file for safety values (default: safety_12x12_2ghosts.bin)" << endl;
-            cout << "  -t, --ttr FILE      Output file for TTR values (default: ttr_12x12_2ghosts.bin)" << endl;
+            cout << "  -s, --safety FILE   Output file for safety values (default: safety_0000.bin)" << endl;
+            cout << "  -g, --ttr-g FILE    Output file for ghost TTR values (default: g_ttr_0000.bin)" << endl;
+            cout << "  -p, --ttr-p FILE    Output file for Pacman TTR values (default: p_ttr_0000.bin)" << endl;
             cout << "  -h, --help          Show this help message" << endl;
             return 0;
         }
@@ -273,8 +445,9 @@ int main(int argc, char* argv[]) {
     cout << "=== Pacman Value Iteration ===" << endl;
     cout << "Maze: " << MAZE_ROWS << "x" << MAZE_COLS << ", Ghosts: 2" << endl;
     cout << "Output files:" << endl;
-    cout << "  Safety: " << safety_file << endl;
-    cout << "  TTR:    " << ttr_file << endl;
+    cout << "  Safety:    " << safety_file << endl;
+    cout << "  TTR (G):   " << ttr_file_g << endl;
+    cout << "  TTR (P):   " << ttr_file_p << endl;
     cout << endl;
 
     auto start = high_resolution_clock::now();
@@ -291,8 +464,13 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    cout << "Saving TTR values to " << ttr_file << "..." << endl;
-    if (!save_values(ttr_file, 1)) {
+    cout << "Saving ghost TTR values to " << ttr_file_g << "..." << endl;
+    if (!save_values(ttr_file_g, 1)) {
+        return 1;
+    }
+
+    cout << "Saving Pacman TTR values to " << ttr_file_p << "..." << endl;
+    if (!save_values(ttr_file_p, 2)) {
         return 1;
     }
 
