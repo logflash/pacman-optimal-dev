@@ -214,7 +214,9 @@ inline int manhattan_dist(int a, int b) {
 }
 
 // Extract worst-case ghost moves (minimize Pacman's value)
-void get_optimal_ghost_moves(int p, int g1, int g2, int& best_g1, int& best_g2) {
+// old_p = Pacman's position BEFORE his move
+// new_p = Pacman's position AFTER his move
+void get_optimal_ghost_moves(int old_p, int new_p, int g1, int g2, int& best_g1, int& best_g2) {
     int g1_neighbors[4], g1_n;
     get_neighbors(g1, g1_neighbors, g1_n);
 
@@ -226,32 +228,32 @@ void get_optimal_ghost_moves(int p, int g1, int g2, int& best_g1, int& best_g2) 
     best_g2 = (g2_n > 0) ? g2_neighbors[0] : g2;
     uint8_t worst_safety = 1;
     uint8_t worst_ttr = 255;
-    // Tiebreaker: each ghost's individual distance
-    int best_g1_dist = 9999;
-    int best_g2_dist = 9999;
     bool found_catch = false;
-    int best_catch_g1_dist = 999;
-    int best_catch_g2_dist = 999;
+    int best_catch_distance = 999; // For tie-breaking catching moves
 
     for(int gi1=0; gi1<g1_n; gi1++){
         for(int gi2=0; gi2<g2_n; gi2++){
             int ng1 = g1_neighbors[gi1];
             int ng2 = g2_neighbors[gi2];
 
-            bool catches = (ng1 == p || ng2 == p);
+            // Check for clipping (position swap) - MUST match value iteration!
+            bool clip1 = (old_p == ng1 && g1 == new_p);
+            bool clip2 = (old_p == ng2 && g2 == new_p);
+
+            // Check for immediate catch - either ghost catches
+            // Includes both destination collision AND clipping
+            bool catches = (ng1 == new_p || ng2 == new_p || clip1 || clip2);
 
             if(catches) {
                 // Among catching moves, prefer ones where both ghosts close in
-                int dist1 = manhattan_dist(ng1, p);
-                int dist2 = manhattan_dist(ng2, p);
+                int dist1 = manhattan_dist(ng1, new_p);
+                int dist2 = manhattan_dist(ng2, new_p);
+                int total_dist = dist1 + dist2;
 
-                if(!found_catch || 
-                   dist1 < best_catch_g1_dist ||
-                   (dist1 == best_catch_g1_dist && dist2 < best_catch_g2_dist)) {
+                if(!found_catch || total_dist < best_catch_distance) {
                     best_g1 = ng1;
                     best_g2 = ng2;
-                    best_catch_g1_dist = dist1;
-                    best_catch_g2_dist = dist2;
+                    best_catch_distance = total_dist;
                     found_catch = true;
                 }
                 continue; // Skip value function check for catching moves
@@ -260,24 +262,13 @@ void get_optimal_ghost_moves(int p, int g1, int g2, int& best_g1, int& best_g2) 
             // If we've found a catch, don't consider non-catching moves
             if(found_catch) continue;
 
-            uint8_t s = safety_value[p][ng1][ng2];
-            uint8_t t = ttr_value[p][ng1][ng2];
-            int g1_dist = manhattan_dist(ng1, p);
-            int g2_dist = manhattan_dist(ng2, p);
+            uint8_t s = safety_value[new_p][ng1][ng2];
+            uint8_t t = ttr_value[new_p][ng1][ng2];
 
-            // Ghosts prefer lower safety, then lower TTR.
-            // Tie-breaking: prefer moves that minimize individual ghost distances to Pacman,
-            // then prefer lower position indices for g1, then g2.
-            if(s < worst_safety || 
-               (s == worst_safety && t < worst_ttr) ||
-               (s == worst_safety && t == worst_ttr && g1_dist < best_g1_dist) ||
-               (s == worst_safety && t == worst_ttr && g1_dist == best_g1_dist && g2_dist < best_g2_dist) ||
-               (s == worst_safety && t == worst_ttr && g1_dist == best_g1_dist && g2_dist == best_g2_dist && ng1 < best_g1) ||
-               (s == worst_safety && t == worst_ttr && g1_dist == best_g1_dist && g2_dist == best_g2_dist && ng1 == best_g1 && ng2 < best_g2)) {
+            // Ghosts prefer lower safety, then lower TTR
+            if(s < worst_safety || (s == worst_safety && t < worst_ttr)) {
                 worst_safety = s;
                 worst_ttr = t;
-                best_g1_dist = g1_dist;
-                best_g2_dist = g2_dist;
                 best_g1 = ng1;
                 best_g2 = ng2;
             }
@@ -307,7 +298,7 @@ void simulate_optimal_play(int start_p, int start_g1, int start_g2, int max_step
 
         int new_p = get_optimal_pacman_move(p, g1, g2);
         int new_g1, new_g2;
-        get_optimal_ghost_moves(new_p, g1, g2, new_g1, new_g2);
+        get_optimal_ghost_moves(p, new_p, g1, g2, new_g1, new_g2);
 
         // Check for clipping/collision during movement
         // Pacman and ghosts move simultaneously, so we need to check:
