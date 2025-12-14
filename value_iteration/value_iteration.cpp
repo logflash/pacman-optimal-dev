@@ -206,7 +206,6 @@ void run_value_iteration() {
 
     // Scared-mode value iteration (Pacman can move twice)
     for (int scared_time = 1; scared_time <= SCARED_STEPS; scared_time++) {
-        cout << "Processing scared_time = " << scared_time << " / " << SCARED_STEPS << " (iterative update)" << endl;
 
         // Initialize values for this scared_time level
         #pragma omp parallel for collapse(2)
@@ -336,15 +335,8 @@ void run_value_iteration() {
                 }
             }
 
-            if(iter % 10 == 0 || converged) {
-                if(iter == 0) {
-                    cout << "  Iteration " << iter << ", changes=" << num_changes << ", catches=" << num_catches_found << "\r" << flush;
-                } else {
-                    cout << "  Iteration " << iter << ", changes=" << num_changes << (converged ? " (CONVERGED)" : "") << "\r" << flush;
-                }
-            }
             if(converged) {
-                cout << endl;
+                cout << "Completed value function for scared_time=" << scared_time << endl;
                 break;
             }
         }
@@ -366,7 +358,6 @@ void run_value_iteration() {
                 }
             }
         }
-        cout << "  TTR_P: finite=" << finite_count << " (caught=" << caught_count << ", intermediate=" << intermediate_count << "), infinite=" << (total_count - finite_count) << endl;
     }
 
 }
@@ -475,6 +466,7 @@ int main(int argc, char* argv[]) {
     }
 
     cout << "Done!" << endl;
+
     return 0;
 }
 

@@ -136,34 +136,97 @@ pair<int,int> get_optimal_pacman_move_normal(int p,int g1,int g2,int scared_time
     return {best,best};
 }
 
-pair<int,int> get_optimal_pacman_move_scared(int p,int g1,int g2,int scared_time){
-    int neighbors1[4], n1; get_neighbors(p,neighbors1,n1);
-    if(n1==0) return {p,p};
-    int best1=p,best2=p; uint8_t min_max=255;
-    for(int i1=0;i1<n1;i1++){
-        int np1=neighbors1[i1];
-        int neighbors2[5], n2; get_neighbors(np1,neighbors2,n2); neighbors2[n2++]=np1;
-        for(int i2=0;i2<n2;i2++){
-            int np2=neighbors2[i2];
-            if(np1==g1||np1==g2||np2==g1||np2==g2) return {np1,np2};
+pair<int,int> get_optimal_pacman_move_scared(
+    int p, int g1, int g2, int scared_time)
+{
+    int p_neighbors[4], p_count;
+    get_neighbors(p, p_neighbors, p_count);
+    if (p_count == 0) return {p, p};
 
-            int g1_n[4], g1_count, g2_n[4], g2_count;
-            get_neighbors(g1,g1_n,g1_count); get_neighbors(g2,g2_n,g2_count);
-            uint8_t worst=0;
-            for(int gi1=0;gi1<g1_count;gi1++){
-                for(int gi2=0;gi2<g2_count;gi2++){
-                    int ng1=g1_n[gi1], ng2=g2_n[gi2];
-                    bool clip=(np1==ng1 && g1==np2)||(np1==ng2 && g2==np2);
-                    uint8_t t=clip?0:ttr_value_p[scared_time-1][np2][ng1][ng2];
-                    if(t>worst) worst=t;
+    int best_p1 = p, best_p2 = p;
+    uint8_t best_safety = 0;
+    uint8_t best_ttr_p  = 255;  // lower is better
+    uint8_t best_ttr_g  = 0;    // higher is better
+
+    int g1_neighbors[4], g1_count;
+    int g2_neighbors[4], g2_count;
+    get_neighbors(g1, g1_neighbors, g1_count);
+    get_neighbors(g2, g2_neighbors, g2_count);
+
+    for (int i1 = 0; i1 < p_count; i1++) {
+        int p1 = p_neighbors[i1];
+
+        int p2_neighbors[5], p2_count;
+        get_neighbors(p1, p2_neighbors, p2_count);
+        p2_neighbors[p2_count++] = p1;  // allow wait
+
+        for (int i2 = 0; i2 < p2_count; i2++) {
+            int p2 = p2_neighbors[i2];
+
+            uint8_t worst_safety = 1;
+            uint8_t worst_ttr_p  = 0;    // max over ghosts
+            uint8_t worst_ttr_g  = 255;  // min over ghosts
+
+            for (int gi1 = 0; gi1 < g1_count; gi1++) {
+                for (int gi2 = 0; gi2 < g2_count; gi2++) {
+                    int ng1 = g1_neighbors[gi1];
+                    int ng2 = g2_neighbors[gi2];
+
+                    bool clip =
+                        (p1 == ng1 && g1 == p2) ||
+                        (p1 == ng2 && g2 == p2);
+
+                    if (clip) {
+                        continue;
+                    }
+
+                    uint8_t s  = safety_value[scared_time - 1][p2][ng1][ng2];
+                    uint8_t tp = ttr_value_p [scared_time - 1][p2][ng1][ng2];
+                    uint8_t tg = ttr_value_g [scared_time - 1][p2][ng1][ng2];
+
+                    worst_safety = min(worst_safety, s);
+                    worst_ttr_p  = max(worst_ttr_p, tp);
+                    worst_ttr_g  = min(worst_ttr_g, tg);
                 }
             }
-            if(worst<min_max){ min_max=worst; best1=np1; best2=np2; }
-            // printf("Pacman Moves: [%d %d] - t = %d\n", np1, np2, worst);
+
+            bool better = false;
+
+            // Primary objective: maximize safety
+            if (worst_safety > best_safety) {
+                better = true;
+            }
+            // Secondary objective depends on safety
+            else if (worst_safety == best_safety) {
+                if (worst_safety == 1) {
+                    // Safe → minimize time to eat a ghost
+                    if (worst_ttr_p < best_ttr_p)
+                        better = true;
+                } else {
+                    // Unsafe → maximize time until capture
+                    if (worst_ttr_g > best_ttr_g)
+                        better = true;
+                }
+            }
+
+            if (better) {
+                best_safety = worst_safety;
+                best_ttr_p  = worst_ttr_p;
+                best_ttr_g  = worst_ttr_g;
+                best_p1     = p1;
+                best_p2     = p2;
+            }
+
+            // Debug hook (optional)
+            printf("P [%d %d] S=%d TP=%d TG=%d\n",
+                   p1, p2, worst_safety, worst_ttr_p, worst_ttr_g);
         }
     }
-    return {best1,best2};
+    printf("CHOSE [%d %d]\n\n", best_p1, best_p2);
+
+    return {best_p1, best_p2};
 }
+
 
 void get_optimal_ghost_moves_normal(int p,int g1,int g2,int scared,int &best_g1,int &best_g2){
     int g1_n[4], g1_count, g2_n[4], g2_count;
@@ -183,20 +246,44 @@ void get_optimal_ghost_moves_normal(int p,int g1,int g2,int scared,int &best_g1,
     }
 }
 
-void get_optimal_ghost_moves_scared(int p,int g1,int g2,int scared,int np1,int np2,int &best_g1,int &best_g2){
-    int g1_n[4], g1_count, g2_n[4], g2_count;
-    get_neighbors(g1,g1_n,g1_count); get_neighbors(g2,g2_n,g2_count);
-    best_g1=(g1_count>0)?g1_n[0]:g1; best_g2=(g2_count>0)?g2_n[0]:g2;
-    uint8_t best=0;
-    for(int i1=0;i1<g1_count;i1++){
-        for(int i2=0;i2<g2_count;i2++){
-            int ng1=g1_n[i1], ng2=g2_n[i2];
-            if(np1==g1||np1==g2||np2==ng1||np2==ng2) continue;
-            bool clip=(np1==ng1 && g1==np2)||(np1==ng2 && g2==np2);
-            // If clipping, ghost gets caught (bad for ghost, so t=0)
-            uint8_t t=clip?0:ttr_value_p[scared-1][np2][ng1][ng2];
-            if(t>best){ best=t; best_g1=ng1; best_g2=ng2; }
+void get_optimal_ghost_moves_scared(
+    int p, int g1, int g2, int scared,
+    int np1, int np2,
+    int &best_g1, int &best_g2)
+{
+    int g1_n[4], g1_count;
+    int g2_n[4], g2_count;
+    get_neighbors(g1, g1_n, g1_count);
+    get_neighbors(g2, g2_n, g2_count);
+
+    uint8_t best_t = 0;
+    bool found = false;
+
+    for (int i1 = 0; i1 < g1_count; i1++) {
+        for (int i2 = 0; i2 < g2_count; i2++) {
+            int ng1 = g1_n[i1];
+            int ng2 = g2_n[i2];
+
+            uint8_t t;
+            if (np2 == ng1 || np2 == ng2) {
+                t = 0; // Pacman catches ghost → worst for ghost
+            } else {
+                t = ttr_value_p[scared - 1][np2][ng1][ng2];
+            }
+
+            if (!found || t > best_t) {
+                best_t = t;
+                best_g1 = ng1;
+                best_g2 = ng2;
+                found = true;
+            }
         }
+    }
+
+    // fallback: move to first neighbor if no valid option (should not happen)
+    if (!found) {
+        best_g1 = g1_n[0];
+        best_g2 = g2_n[0];
     }
 }
 
