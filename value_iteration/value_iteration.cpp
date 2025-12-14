@@ -1,5 +1,5 @@
-/* Value iteration code with two ghosts and Pacman, without super pellets
- * Outputs safety and TTR values to separate binary files
+/* Value iteration code for optimal Pacman play with two ghosts
+ * Computes safety and TTR values and outputs to separate binary files
  */
 
 #include <iostream>
@@ -54,7 +54,7 @@ inline void get_neighbors(int idx, int* neighbors, int &count) {
 
 uint8_t safety_value[SCARED_STEPS+1][MAZE_CELLS][MAZE_CELLS][MAZE_CELLS] = {0};
 uint8_t ttr_value_g[SCARED_STEPS+1][MAZE_CELLS][MAZE_CELLS][MAZE_CELLS] = {0};  // Time for ghosts to reach Pacman
-uint8_t ttr_value_p[SCARED_STEPS+1][MAZE_CELLS][MAZE_CELLS][MAZE_CELLS] = {0};        // Time for Pacman to reach ghosts (no super pellets)
+uint8_t ttr_value_p[SCARED_STEPS+1][MAZE_CELLS][MAZE_CELLS][MAZE_CELLS] = {0};  // Time for Pacman to reach ghosts
 
 // Progress bar helper
 void print_progress(int iter, int max_iters, double elapsed_sec, bool converged) {
@@ -88,10 +88,10 @@ void run_value_iteration() {
     const int MAX_ITERS = 1000;
     auto start_time = high_resolution_clock::now();
 
-    // Step 1: Solve scared_time = 0 with full value iteration
+    // Solve scared_time = 0 with full value iteration
     cout << "\nProcessing scared_time = 0 (full value iteration)" << endl;
 
-    // Initial value function setup
+    // Initialize value function for scared_time = 0
     #pragma omp parallel for collapse(2)
     for (int p = 0; p < MAZE_CELLS; p++) {
         for (int g1 = 0; g1 < MAZE_CELLS; g1++) {
@@ -99,8 +99,8 @@ void run_value_iteration() {
             uint8_t* trow_g = ttr_value_g[0][p][g1];
             uint8_t* trow_p = ttr_value_p[0][p][g1];
 
-            for(int g2 = 0; g2 < MAZE_CELLS; g2++) {
-                if(p == g1 || p == g2) {
+            for (int g2 = 0; g2 < MAZE_CELLS; g2++) {
+                if (p == g1 || p == g2) {
                     srow[g2] = 0;
                     trow_g[g2] = 0;
                     trow_p[g2] = 0;
@@ -114,23 +114,23 @@ void run_value_iteration() {
     }
 
     bool converged;
-    for(int iter=0; iter<MAX_ITERS; iter++){
+    for (int iter = 0; iter < MAX_ITERS; iter++) {
         converged = true;
 
         #pragma omp parallel for collapse(2) schedule(dynamic) reduction(&&:converged)
-        for(int p=0;p<MAZE_CELLS;p++){
-            for(int g1=0;g1<MAZE_CELLS;g1++){
+        for (int p = 0; p < MAZE_CELLS; p++) {
+            for (int g1 = 0; g1 < MAZE_CELLS; g1++) {
                 uint8_t* srow = safety_value[0][p][g1];
                 uint8_t* trow_g = ttr_value_g[0][p][g1];
 
-                for(int g2=0; g2<MAZE_CELLS; g2++){
-                    if(!is_free(row(p), col(p)) ||
-                       !is_free(row(g1), col(g1)) ||
-                       !is_free(row(g2), col(g2))) {
+                for (int g2 = 0; g2 < MAZE_CELLS; g2++) {
+                    if (!is_free(row(p), col(p)) ||
+                        !is_free(row(g1), col(g1)) ||
+                        !is_free(row(g2), col(g2))) {
                         continue;
                     }
 
-                    if(p==g1 || p==g2){
+                    if (p == g1 || p == g2) {
                         srow[g2] = 0;
                         trow_g[g2] = 0;
                         continue;
@@ -138,35 +138,34 @@ void run_value_iteration() {
 
                     int pac_neighbors[4], pac_n;
                     get_neighbors(p, pac_neighbors, pac_n);
-                    if(pac_n==0) continue;
+                    if (pac_n == 0) continue;
 
                     uint8_t best_safety = 0;
                     uint8_t best_ttr_g = 0;
 
-                    for(int pi=0; pi<pac_n; pi++){
+                    for (int pi = 0; pi < pac_n; pi++) {
                         int np = pac_neighbors[pi];
 
                         int g1_neighbors[4], g1_n;
                         get_neighbors(g1, g1_neighbors, g1_n);
-                        if(g1_n==0) continue;
+                        if (g1_n == 0) continue;
 
                         int g2_neighbors[4], g2_n;
                         get_neighbors(g2, g2_neighbors, g2_n);
-                        if(g2_n==0) continue;
+                        if (g2_n == 0) continue;
 
                         uint8_t worst_safety = 1;
                         uint8_t worst_ttr_g = 255;
 
-                        for(int gi1=0; gi1<g1_n; gi1++){
-                            for(int gi2=0; gi2<g2_n; gi2++){
+                        for (int gi1 = 0; gi1 < g1_n; gi1++) {
+                            for (int gi2 = 0; gi2 < g2_n; gi2++) {
                                 int ng1 = g1_neighbors[gi1];
                                 int ng2 = g2_neighbors[gi2];
 
-                                bool clipping = (p == ng1 && g1 == np) ||
-                                    (p == ng2 && g2 == np);
+                                bool clipping = (p == ng1 && g1 == np) || (p == ng2 && g2 == np);
 
                                 uint8_t s, t_g;
-                                if(clipping) {
+                                if (clipping) {
                                     s = 0;
                                     t_g = 0;
                                 } else {
@@ -184,7 +183,7 @@ void run_value_iteration() {
                         best_ttr_g = max(best_ttr_g, new_ttr_g);
                     }
 
-                    if(best_safety != srow[g2] || best_ttr_g != trow_g[g2]){
+                    if (best_safety != srow[g2] || best_ttr_g != trow_g[g2]) {
                         converged = false;
                         srow[g2] = best_safety;
                         trow_g[g2] = best_ttr_g;
@@ -197,34 +196,33 @@ void run_value_iteration() {
         double elapsed = duration_cast<milliseconds>(now - start_time).count() / 1000.0;
         print_progress(iter, MAX_ITERS, elapsed, converged);
 
-        if(converged) {
+        if (converged) {
             cout << endl;
             break;
         }
     }
 
-
     // Scared-mode value iteration (Pacman can move twice)
     for (int scared_time = 1; scared_time <= SCARED_STEPS; scared_time++) {
 
-        // Initialize values for this scared_time level
+        // Initialize value function for this scared_time level
         #pragma omp parallel for collapse(2)
         for (int p = 0; p < MAZE_CELLS; p++) {
             for (int g1 = 0; g1 < MAZE_CELLS; g1++) {
                 uint8_t* srow = safety_value[scared_time][p][g1];
                 uint8_t* trow_g = ttr_value_g[scared_time][p][g1];
                 uint8_t* trow_p = ttr_value_p[scared_time][p][g1];
-                for(int g2 = 0; g2 < MAZE_CELLS; g2++) {
-                    if(p == g1 || p == g2) {
+                for (int g2 = 0; g2 < MAZE_CELLS; g2++) {
+                    if (p == g1 || p == g2) {
                         // Caught states: Pacman caught a ghost
-                        srow[g2] = 1;  // Safe (ghost is caught)
+                        srow[g2] = 1;      // Safe (ghost is caught)
                         trow_g[g2] = 255;  // Ghosts can't catch Pacman anymore
-                        trow_p[g2] = 0;  // Already caught
+                        trow_p[g2] = 0;    // Already caught
                     } else {
-                        // Non-caught states: initialize to unknown
-                        srow[g2] = 0;  // Will be computed
-                        trow_g[g2] = 0;  // Will be computed
-                        trow_p[g2] = 255;  // Initialize to "unknown/unreachable"
+                        // Non-caught states: will be computed
+                        srow[g2] = 0;      // Will be computed
+                        trow_g[g2] = 0;    // Will be computed
+                        trow_p[g2] = 255;  // Unknown/unreachable
                     }
                 }
             }
@@ -234,22 +232,22 @@ void run_value_iteration() {
         const int MAX_ITERS_SCARED = 500;
         int num_changes = 0;
         int num_catches_found = 0;
-        for(int iter = 0; iter < MAX_ITERS_SCARED; iter++) {
+        for (int iter = 0; iter < MAX_ITERS_SCARED; iter++) {
             converged = true;
             num_changes = 0;
             num_catches_found = 0;
 
             #pragma omp parallel for collapse(2) schedule(dynamic) reduction(&&:converged)
-            for(int p = 0; p < MAZE_CELLS; p++) {
-                for(int g1 = 0; g1 < MAZE_CELLS; g1++){
+            for (int p = 0; p < MAZE_CELLS; p++) {
+                for (int g1 = 0; g1 < MAZE_CELLS; g1++) {
                     uint8_t* srow = safety_value[scared_time][p][g1];
                     uint8_t* trow_g = ttr_value_g[scared_time][p][g1];
                     uint8_t* trow_p = ttr_value_p[scared_time][p][g1];
 
-                    for(int g2 = 0; g2 < MAZE_CELLS; g2++){
-                        if(!is_free(row(p), col(p)) || !is_free(row(g1), col(g1)) || !is_free(row(g2), col(g2)))
+                    for (int g2 = 0; g2 < MAZE_CELLS; g2++) {
+                        if (!is_free(row(p), col(p)) || !is_free(row(g1), col(g1)) || !is_free(row(g2), col(g2)))
                             continue;
-                        if(p == g1 || p == g2){
+                        if (p == g1 || p == g2) {
                             srow[g2] = 1;
                             trow_g[g2] = 255;
                             trow_p[g2] = 0;
@@ -258,56 +256,57 @@ void run_value_iteration() {
 
                         int pac_neighbors[4], pac_n;
                         get_neighbors(p, pac_neighbors, pac_n);
-                        if(pac_n == 0) continue;
+                        if (pac_n == 0) continue;
 
-                        uint8_t best_safety = 0;       // Pacman can be safe if any move works
-                        uint8_t best_ttr_g = 0;        // Max over worst-case ghost time
-                        uint8_t best_ttr_p = 255;      // Min steps for Pacman to reach a ghost
+                        uint8_t best_safety = 0;    // Pacman can be safe if any move works
+                        uint8_t best_ttr_g = 0;     // Max over worst-case ghost time
+                        uint8_t best_ttr_p = 255;   // Min steps for Pacman to reach a ghost
 
                         // Pacman can move twice
-                        for(int pi1=0; pi1<pac_n; pi1++){
+                        for (int pi1 = 0; pi1 < pac_n; pi1++) {
                             int np1 = pac_neighbors[pi1];
                             int pac_neighbors2[5], pac_n2;
                             get_neighbors(np1, pac_neighbors2, pac_n2);
-                            pac_neighbors2[pac_n2++] = np1;  // stay option on move 2
+                            pac_neighbors2[pac_n2++] = np1;  // Allow wait on move 2
 
-                            for(int pi2=0; pi2<pac_n2; pi2++){
+                            for (int pi2 = 0; pi2 < pac_n2; pi2++) {
                                 int np2 = pac_neighbors2[pi2];
 
-                                int g1_neighbors[4], g1_n; get_neighbors(g1, g1_neighbors, g1_n);
-                                int g2_neighbors[4], g2_n; get_neighbors(g2, g2_neighbors, g2_n);
+                                int g1_neighbors[4], g1_n;
+                                int g2_neighbors[4], g2_n;
+                                get_neighbors(g1, g1_neighbors, g1_n);
+                                get_neighbors(g2, g2_neighbors, g2_n);
 
-                                uint8_t worst_safe_for_combo = 1;  // Ghosts minimize safety
+                                uint8_t worst_safe_for_combo = 1;    // Ghosts minimize safety
                                 uint8_t worst_ttr_g_for_combo = 255;
                                 uint8_t worst_ttr_p_for_combo = 0;
 
-                                for(int gi1=0; gi1<g1_n; gi1++){
-                                    for(int gi2=0; gi2<g2_n; gi2++){
+                                for (int gi1 = 0; gi1 < g1_n; gi1++) {
+                                    for (int gi2 = 0; gi2 < g2_n; gi2++) {
                                         int ng1 = g1_neighbors[gi1];
                                         int ng2 = g2_neighbors[gi2];
 
                                         bool pacman_catches_first_move = (np1 == g1 || np1 == g2);
                                         bool pacman_catches_second_move = (np2 == ng1 || np2 == ng2);
-                                        bool pacman_clipped  = (np1 == ng1 && g1 == np2) || (np1 == ng2 && g2 == np2);
+                                        bool pacman_clipped = (np1 == ng1 && g1 == np2) || (np1 == ng2 && g2 == np2);
 
                                         bool pacman_catches = pacman_catches_first_move || pacman_catches_second_move;
 
                                         uint8_t s, t_g, t_p;
-                                        if(pacman_catches || pacman_clipped){
+                                        if (pacman_catches || pacman_clipped) {
                                             // Ghost gets caught
                                             s = (scared_time > 1) ? safety_value[scared_time - 1][np2][ng1][ng2] : 1;
                                             t_p = 0;  // Ghost gets caught
-                                            // For TTR_G
                                             t_g = (scared_time > 1) ? ttr_value_g[scared_time - 1][np2][ng1][ng2] : 255;
-                                            if(iter == 0) num_catches_found++;
+                                            if (iter == 0) num_catches_found++;
                                         } else {
                                             // Normal state transition - look up values from next state
-                                            s   = safety_value[scared_time - 1][np2][ng1][ng2];
+                                            s = safety_value[scared_time - 1][np2][ng1][ng2];
                                             t_g = ttr_value_g[scared_time - 1][np2][ng1][ng2];
                                             t_p = ttr_value_p[scared_time - 1][np2][ng1][ng2];
                                         }
 
-                                        // For scared mode: ghosts minimize safety, maximize TTR values
+                                        // Ghosts minimize safety and maximize TTR values
                                         worst_safe_for_combo = min(worst_safe_for_combo, s);
                                         worst_ttr_g_for_combo = min(worst_ttr_g_for_combo, t_g);
                                         worst_ttr_p_for_combo = max(worst_ttr_p_for_combo, t_p);
@@ -324,7 +323,7 @@ void run_value_iteration() {
                             }
                         }
 
-                        if(srow[g2] != best_safety || trow_g[g2] != best_ttr_g || trow_p[g2] != best_ttr_p){
+                        if (srow[g2] != best_safety || trow_g[g2] != best_ttr_g || trow_p[g2] != best_ttr_p) {
                             srow[g2] = best_safety;
                             trow_g[g2] = best_ttr_g;
                             trow_p[g2] = best_ttr_p;
@@ -335,23 +334,23 @@ void run_value_iteration() {
                 }
             }
 
-            if(converged) {
+            if (converged) {
                 cout << "Completed value function for scared_time=" << scared_time << endl;
                 break;
             }
         }
 
-        // Debug: Count how many states have finite TTR_P values
+        // Count how many states have finite TTR_P values (for debugging)
         int finite_count = 0, caught_count = 0, intermediate_count = 0, total_count = 0;
-        for(int p = 0; p < MAZE_CELLS; p++) {
-            for(int g1 = 0; g1 < MAZE_CELLS; g1++) {
-                for(int g2 = 0; g2 < MAZE_CELLS; g2++) {
-                    if(is_free(row(p), col(p)) && is_free(row(g1), col(g1)) && is_free(row(g2), col(g2))) {
+        for (int p = 0; p < MAZE_CELLS; p++) {
+            for (int g1 = 0; g1 < MAZE_CELLS; g1++) {
+                for (int g2 = 0; g2 < MAZE_CELLS; g2++) {
+                    if (is_free(row(p), col(p)) && is_free(row(g1), col(g1)) && is_free(row(g2), col(g2))) {
                         total_count++;
                         uint8_t val = ttr_value_p[scared_time][p][g1][g2];
-                        if(val < 255) {
+                        if (val < 255) {
                             finite_count++;
-                            if(val == 0) caught_count++;
+                            if (val == 0) caught_count++;
                             else intermediate_count++;
                         }
                     }
@@ -359,7 +358,6 @@ void run_value_iteration() {
             }
         }
     }
-
 }
 
 // Binary file header structure
