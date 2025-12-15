@@ -248,12 +248,22 @@ void free_tables() {
 // Game State Display
 // ============================================================================
 
+// ANSI color codes
+#define ANSI_RESET   "\033[0m"
+#define ANSI_YELLOW  "\033[1;33m"  // Pacman
+#define ANSI_RED     "\033[1;31m"  // Ghosts
+#define ANSI_BLUE    "\033[1;34m"  // Walls
+#define ANSI_WHITE   "\033[1;37m"  // Power pellet
+#define ANSI_CYAN    "\033[1;36m"  // Powered Pacman
+#define ANSI_GREEN   "\033[1;32m"  // Win message
+#define ANSI_MAGENTA "\033[1;35m"  // Caught/collision
+
 void print_game_state(int p, int g1, int g2, int pellet_mask, int power_timer, int step) {
     cout << "Step " << step << ":";
 
     // Show power status
     if (is_powered(power_timer)) {
-        cout << " [POWERED: " << power_timer << " turns left]";
+        cout << " " << ANSI_CYAN << "[POWERED: " << power_timer << " turns left]" << ANSI_RESET;
     }
 
     // Show pellet count
@@ -278,36 +288,38 @@ void print_game_state(int p, int g1, int g2, int pellet_mask, int power_timer, i
             int idx = r * MAZE_COLS + c;
 
             if (pacman_caught && idx == p) {
-                cout << "X ";  // Caught
+                cout << ANSI_MAGENTA << "X " << ANSI_RESET;  // Caught
             } else if (idx == p) {
-                if (is_powered(power_timer)) cout << "@ ";  // Powered Pacman
-                else cout << "P ";
+                if (is_powered(power_timer)) 
+                    cout << ANSI_CYAN << "@ " << ANSI_RESET;  // Powered Pacman
+                else 
+                    cout << ANSI_YELLOW << "P " << ANSI_RESET;
             } else if (g1_alive && idx == g1 && g2_alive && idx == g2) {
-                cout << "B ";  // Both ghosts
+                cout << ANSI_RED << "B " << ANSI_RESET;  // Both ghosts
             } else if (g1_alive && idx == g1) {
-                cout << "1 ";
+                cout << ANSI_RED << "1 " << ANSI_RESET;
             } else if (g2_alive && idx == g2) {
-                cout << "2 ";
+                cout << ANSI_RED << "2 " << ANSI_RESET;
             } else if (get_pellet_at(idx, pellet_mask) >= 0) {
-                cout << "O ";  // Pellet
+                cout << ANSI_WHITE << "O " << ANSI_RESET;  // Pellet
             } else if (is_free(r, c)) {
                 cout << ". ";
             } else {
-                cout << "  ";
+                cout << ANSI_BLUE << "# " << ANSI_RESET;  // Wall
             }
         }
         cout << endl;
     }
 
     // Position info
-    cout << "Pacman=" << p << " [" << row(p) << "," << col(p) << "]";
-    if (g1_alive) cout << ", Ghost1=" << g1 << " [" << row(g1) << "," << col(g1) << "]";
-    else cout << ", Ghost1=DEAD";
-    if (g2_alive) cout << ", Ghost2=" << g2 << " [" << row(g2) << "," << col(g2) << "]";
-    else cout << ", Ghost2=DEAD";
+    cout << ANSI_YELLOW << "Pacman" << ANSI_RESET << "=" << p << " [" << row(p) << "," << col(p) << "]";
+    if (g1_alive) cout << ", " << ANSI_RED << "Ghost1" << ANSI_RESET << "=" << g1 << " [" << row(g1) << "," << col(g1) << "]";
+    else cout << ", " << ANSI_RED << "Ghost1" << ANSI_RESET << "=DEAD";
+    if (g2_alive) cout << ", " << ANSI_RED << "Ghost2" << ANSI_RESET << "=" << g2 << " [" << row(g2) << "," << col(g2) << "]";
+    else cout << ", " << ANSI_RED << "Ghost2" << ANSI_RESET << "=DEAD";
 
-    if (pacman_caught) cout << " (CAUGHT!)";
-    if (pacman_wins) cout << " (PACMAN WINS!)";
+    if (pacman_caught) cout << " " << ANSI_MAGENTA << "(CAUGHT!)" << ANSI_RESET;
+    if (pacman_wins) cout << " " << ANSI_GREEN << "(PACMAN WINS!)" << ANSI_RESET;
     cout << endl << endl;
 }
 
@@ -681,7 +693,7 @@ void simulate_optimal_play(int start_p, int start_g1, int start_g2, int max_step
 
         // Win condition
         if (!g1_alive && !g2_alive) {
-            cout << "PACMAN WINS! Both ghosts eliminated!" << endl;
+            cout << ANSI_GREEN << "PACMAN WINS! Both ghosts eliminated!" << ANSI_RESET << endl;
             break;
         }
 
@@ -689,7 +701,7 @@ void simulate_optimal_play(int start_p, int start_g1, int start_g2, int max_step
         bool caught = (!is_powered(power_timer)) &&
                       ((g1_alive && p == g1) || (g2_alive && p == g2));
         if (caught) {
-            cout << "Game over - Pacman caught at step " << (step-1) << "!" << endl;
+            cout << ANSI_RED << "Game over - Pacman caught at step " << (step-1) << "!" << ANSI_RESET << endl;
             break;
         }
 
@@ -699,8 +711,9 @@ void simulate_optimal_play(int start_p, int start_g1, int start_g2, int max_step
         // Check pellet eating
         int pellet_eaten = get_pellet_at(move.pos1, pellet_mask);
         if (pellet_eaten >= 0) {
-            cout << ">>> Pacman eats pellet " << pellet_eaten << " at position "
-                 << pellet_positions[pellet_eaten] << "! <<<" << endl;
+            cout << ANSI_WHITE << ">>> " << ANSI_YELLOW << "Pacman" << ANSI_WHITE 
+                 << " eats pellet " << pellet_eaten << " at position "
+                 << pellet_positions[pellet_eaten] << "! <<<" << ANSI_RESET << endl;
         }
 
         bool will_be_powered = is_powered(move.new_power_timer) || pellet_eaten >= 0;
@@ -716,11 +729,13 @@ void simulate_optimal_play(int start_p, int start_g1, int start_g2, int max_step
         // Check ghost eating on first move
         if (will_be_powered) {
             if (g1_alive && move.pos1 == g1) {
-                cout << ">>> Pacman eats Ghost 1! <<<" << endl;
+                cout << ANSI_CYAN << ">>> " << ANSI_YELLOW << "Pacman" << ANSI_CYAN 
+                     << " eats " << ANSI_RED << "Ghost 1" << ANSI_CYAN << "! <<<" << ANSI_RESET << endl;
                 move.new_g1 = DEAD;
             }
             if (g2_alive && move.pos1 == g2) {
-                cout << ">>> Pacman eats Ghost 2! <<<" << endl;
+                cout << ANSI_CYAN << ">>> " << ANSI_YELLOW << "Pacman" << ANSI_CYAN 
+                     << " eats " << ANSI_RED << "Ghost 2" << ANSI_CYAN << "! <<<" << ANSI_RESET << endl;
                 move.new_g2 = DEAD;
             }
         }
@@ -731,11 +746,13 @@ void simulate_optimal_play(int start_p, int start_g1, int start_g2, int max_step
 
         if (will_be_powered) {
             if (g1_alive && move.pos2 == move.new_g1) {
-                cout << ">>> Pacman eats Ghost 1 on second move! <<<" << endl;
+                cout << ANSI_CYAN << ">>> " << ANSI_YELLOW << "Pacman" << ANSI_CYAN 
+                     << " eats " << ANSI_RED << "Ghost 1" << ANSI_CYAN << " on second move! <<<" << ANSI_RESET << endl;
                 move.new_g1 = DEAD;
             }
             if (g2_alive && move.pos2 == move.new_g2) {
-                cout << ">>> Pacman eats Ghost 2 on second move! <<<" << endl;
+                cout << ANSI_CYAN << ">>> " << ANSI_YELLOW << "Pacman" << ANSI_CYAN 
+                     << " eats " << ANSI_RED << "Ghost 2" << ANSI_CYAN << " on second move! <<<" << ANSI_RESET << endl;
                 move.new_g2 = DEAD;
             }
         }
@@ -772,13 +789,13 @@ void simulate_optimal_play(int start_p, int start_g1, int start_g2, int max_step
         g2_alive = (g2 != DEAD);
 
         if (!g1_alive && !g2_alive) {
-            cout << "PACMAN WINS! Both ghosts eliminated!" << endl;
+            cout << ANSI_GREEN << "PACMAN WINS! Both ghosts eliminated!" << ANSI_RESET << endl;
             break;
         }
 
         if (collision) {
-            cout << "COLLISION: Pacman caught by ghost!" << endl;
-            cout << "Game over - Pacman caught at step " << step << "!" << endl;
+            cout << ANSI_MAGENTA << "COLLISION: Pacman caught by ghost!" << ANSI_RESET << endl;
+            cout << ANSI_RED << "Game over - Pacman caught at step " << step << "!" << ANSI_RESET << endl;
             break;
         }
 
