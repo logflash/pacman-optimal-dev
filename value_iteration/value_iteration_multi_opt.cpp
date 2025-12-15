@@ -250,8 +250,13 @@ void run_value_iteration() {
                     if (g1 == DEAD && g2 == DEAD) {
                         safety_value[idx] = 1;
                         ttr_g_value[idx] = 255;
-                        ttr_p_value[idx] = 0;
+                        ttr_p_value[idx] = 0;  // Already caught at least one ghost
                         continue;
+                    }
+
+                    // At least one ghost caught
+                    if (g1 == DEAD || g2 == DEAD) {
+                        ttr_p_value[idx] = 0;  // Already caught at least one ghost
                     }
 
                     bool g1_alive = (g1 != DEAD && is_valid_pos(g1));
@@ -261,11 +266,15 @@ void run_value_iteration() {
                     if (collision && !is_powered(power_timer)) {
                         safety_value[idx] = 0;
                         ttr_g_value[idx] = 0;
-                        ttr_p_value[idx] = 255;
+                        if (g1 != DEAD && g2 != DEAD) {
+                            ttr_p_value[idx] = 255;  // Pacman can't catch ghosts (dead)
+                        }
                     } else {
                         safety_value[idx] = 1;
                         ttr_g_value[idx] = 255;
-                        ttr_p_value[idx] = 255;
+                        if (g1 != DEAD && g2 != DEAD) {
+                            ttr_p_value[idx] = 255;  // Will be computed
+                        }
                     }
                 }
             }
@@ -375,10 +384,20 @@ void run_value_iteration() {
                                 uint8_t worst_ttr_g = 255;
                                 uint8_t worst_ttr_p = 0;
 
-                                for (int gi1 = 0; gi1 < g1_moves; gi1++) {
-                                    for (int gi2 = 0; gi2 < g2_moves; gi2++) {
-                                        int ng1 = g1_alive ? g1_neighbors[gi1] : DEAD;
-                                        int ng2 = g2_alive ? g2_neighbors[gi2] : DEAD;
+                                // For powered mode: check if ghosts are caught on Pacman's first move
+                                // If so, they don't get to move on the second (simultaneous) move
+                                bool g1_caught_move1 = will_be_powered && g1_alive && (np1 == g1);
+                                bool g2_caught_move1 = will_be_powered && g2_alive && (np1 == g2);
+
+                                // Adjust iteration: ghosts caught on move 1 have no valid moves
+                                int g1_iter_count = g1_caught_move1 ? 1 : g1_moves;
+                                int g2_iter_count = g2_caught_move1 ? 1 : g2_moves;
+
+                                for (int gi1 = 0; gi1 < g1_iter_count; gi1++) {
+                                    for (int gi2 = 0; gi2 < g2_iter_count; gi2++) {
+                                        // Ghosts caught on move 1 are already DEAD for move 2
+                                        int ng1 = g1_caught_move1 ? DEAD : (g1_alive ? g1_neighbors[gi1] : DEAD);
+                                        int ng2 = g2_caught_move1 ? DEAD : (g2_alive ? g2_neighbors[gi2] : DEAD);
 
                                         int result_g1 = ng1;
                                         int result_g2 = ng2;
@@ -387,15 +406,26 @@ void run_value_iteration() {
                                         bool pacman_dies = false;
 
                                         if (will_be_powered) {
-                                            bool catch1_m1 = g1_alive && (np1 == g1);
-                                            bool catch2_m1 = g2_alive && (np1 == g2);
-                                            bool catch1_m2 = g1_alive && (np2 == ng1);
-                                            bool catch2_m2 = g2_alive && (np2 == ng2);
-                                            bool clip1 = g1_alive && (np1 == ng1 && g1 == np2);
-                                            bool clip2 = g2_alive && (np1 == ng2 && g2 == np2);
+                                            // Powered: Pacman moves twice
+                                            // First move: Pacman moves to np1, ghosts stay at g1/g2
+                                            // Second move: Pacman moves to np2 SIMULTANEOUSLY with ghosts moving to ng1/ng2
 
-                                            if (catch1_m1 || catch1_m2 || clip1) result_g1 = DEAD;
-                                            if (catch2_m1 || catch2_m2 || clip2) result_g2 = DEAD;
+                                            // Ghosts caught on first move are already handled above (ng1/ng2 = DEAD)
+                                            bool g1_alive_after_move1 = g1_alive && !g1_caught_move1;
+                                            bool g2_alive_after_move1 = g2_alive && !g2_caught_move1;
+
+                                            // Second move is simultaneous: Pacman goes np1->np2, ghosts go g1->ng1, g2->ng2
+                                            // Check if Pacman catches ghost on second move (simultaneous collision)
+                                            bool catch1_m2 = g1_alive_after_move1 && (np2 == ng1);
+                                            bool catch2_m2 = g2_alive_after_move1 && (np2 == ng2);
+
+                                            // Check for clipping on second move (Pacman and ghost swap positions)
+                                            bool clip1 = g1_alive_after_move1 && (np1 == ng1 && g1 == np2);
+                                            bool clip2 = g2_alive_after_move1 && (np1 == ng2 && g2 == np2);
+
+                                            // Determine final ghost states
+                                            if (g1_caught_move1 || catch1_m2 || clip1) result_g1 = DEAD;
+                                            if (g2_caught_move1 || catch2_m2 || clip2) result_g2 = DEAD;
                                         } else {
                                             bool clip1 = g1_alive && (p == ng1 && g1 == np1);
                                             bool clip2 = g2_alive && (p == ng2 && g2 == np1);
@@ -413,8 +443,22 @@ void run_value_iteration() {
                                         uint8_t s, tg, tp;
                                         if (pacman_dies) {
                                             s = 0; tg = 0; tp = 255;
-                                        } else if (result_g1 == DEAD && result_g2 == DEAD) {
-                                            s = 1; tg = 255; tp = 0;
+                                        } else if (result_g1 == DEAD || result_g2 == DEAD) {
+                                            // Pacman caught at least one ghost!
+                                            tp = 0;  // Already caught at least one ghost
+                                            if (result_g1 == DEAD && result_g2 == DEAD) {
+                                                // Both ghosts dead
+                                                s = 1;
+                                                tg = 255;  // Ghosts can never catch Pacman
+                                            } else {
+                                                // One ghost dead, one still alive
+                                                int next_pw = encode_power_state(result_pellet_mask, result_power_timer);
+                                                size_t next_idx = value_index(np2, result_g1, result_g2, next_pw);
+                                                s = safety_value[next_idx];
+                                                tg = ttr_g_value[next_idx];
+                                                // Ensure ttr_p is 0 for any state with a dead ghost
+                                                tp = 0;
+                                            }
                                         } else {
                                             int next_pw = encode_power_state(result_pellet_mask, result_power_timer);
                                             size_t next_idx = value_index(np2, result_g1, result_g2, next_pw);
@@ -435,6 +479,11 @@ void run_value_iteration() {
                                 uint8_t new_ttr_p = (worst_ttr_p >= 255) ? 255 : (worst_ttr_p + 1);
                                 best_ttr_p = min(best_ttr_p, new_ttr_p);
                             }
+                        }
+
+                        // Enforce ttr_p = 0 for any state with a dead ghost
+                        if (g1 == DEAD || g2 == DEAD) {
+                            best_ttr_p = 0;
                         }
 
                         if (best_safety != safety_value[idx] ||

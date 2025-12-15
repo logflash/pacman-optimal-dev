@@ -416,10 +416,20 @@ MoveResult get_optimal_pacman_move(int p, int g1, int g2, int pellet_mask, int p
             uint8_t worst_ttr_g = 255;
             uint8_t worst_ttr_p = 0;
 
-            for (int gi1 = 0; gi1 < g1_moves; gi1++) {
-                for (int gi2 = 0; gi2 < g2_moves; gi2++) {
-                    int ng1 = g1_alive ? g1_neighbors[gi1] : DEAD;
-                    int ng2 = g2_alive ? g2_neighbors[gi2] : DEAD;
+            // For powered mode: check if ghosts are caught on Pacman's first move
+            // If so, they don't get to move on the second (simultaneous) move
+            bool g1_caught_move1 = will_be_powered && g1_alive && (np1 == g1);
+            bool g2_caught_move1 = will_be_powered && g2_alive && (np1 == g2);
+
+            // Adjust iteration: ghosts caught on move 1 have no valid moves
+            int g1_iter_count = g1_caught_move1 ? 1 : g1_moves;
+            int g2_iter_count = g2_caught_move1 ? 1 : g2_moves;
+
+            for (int gi1 = 0; gi1 < g1_iter_count; gi1++) {
+                for (int gi2 = 0; gi2 < g2_iter_count; gi2++) {
+                    // Ghosts caught on move 1 are already DEAD for move 2
+                    int ng1 = g1_caught_move1 ? DEAD : (g1_alive ? g1_neighbors[gi1] : DEAD);
+                    int ng2 = g2_caught_move1 ? DEAD : (g2_alive ? g2_neighbors[gi2] : DEAD);
 
                     int result_g1 = ng1;
                     int result_g2 = ng2;
@@ -428,16 +438,25 @@ MoveResult get_optimal_pacman_move(int p, int g1, int g2, int pellet_mask, int p
                     bool pacman_dies = false;
 
                     if (will_be_powered) {
-                        // Check ghost captures
-                        bool catch1_m1 = g1_alive && (np1 == g1);
-                        bool catch2_m1 = g2_alive && (np1 == g2);
-                        bool catch1_m2 = g1_alive && (np2 == ng1);
-                        bool catch2_m2 = g2_alive && (np2 == ng2);
-                        bool clip1 = g1_alive && (np1 == ng1 && g1 == np2);
-                        bool clip2 = g2_alive && (np1 == ng2 && g2 == np2);
+                        // Powered: Pacman moves twice
+                        // First move: Pacman moves to np1, ghosts stay at g1/g2
+                        // Second move: Pacman moves to np2 SIMULTANEOUSLY with ghosts moving to ng1/ng2
 
-                        if (catch1_m1 || catch1_m2 || clip1) result_g1 = DEAD;
-                        if (catch2_m1 || catch2_m2 || clip2) result_g2 = DEAD;
+                        // Ghosts caught on first move are already handled above (ng1/ng2 = DEAD)
+                        bool g1_alive_after_move1 = g1_alive && !g1_caught_move1;
+                        bool g2_alive_after_move1 = g2_alive && !g2_caught_move1;
+
+                        // Check if Pacman catches ghost on second move (simultaneous collision)
+                        bool catch1_m2 = g1_alive_after_move1 && (np2 == ng1);
+                        bool catch2_m2 = g2_alive_after_move1 && (np2 == ng2);
+
+                        // Check for clipping on second move (Pacman and ghost swap positions)
+                        bool clip1 = g1_alive_after_move1 && (np1 == ng1 && g1 == np2);
+                        bool clip2 = g2_alive_after_move1 && (np1 == ng2 && g2 == np2);
+
+                        // Determine final ghost states
+                        if (g1_caught_move1 || catch1_m2 || clip1) result_g1 = DEAD;
+                        if (g2_caught_move1 || catch2_m2 || clip2) result_g2 = DEAD;
                     } else {
                         // Check Pacman capture
                         bool clip1 = g1_alive && (p == ng1 && g1 == np1);
@@ -529,16 +548,27 @@ void get_optimal_ghost_moves(int p, int np1, int np2, int g1, int g2,
 
     uint8_t worst_safety = 1;
     uint8_t worst_ttr_g = 255;
+    uint8_t worst_ttr_p = 0;
     bool found_catch = false;
     int best_catch_dist = 999;
 
     int g1_moves = g1_alive ? g1_n : 1;
     int g2_moves = g2_alive ? g2_n : 1;
 
-    for (int gi1 = 0; gi1 < g1_moves; gi1++) {
-        for (int gi2 = 0; gi2 < g2_moves; gi2++) {
-            int ng1 = g1_alive ? g1_neighbors[gi1] : DEAD;
-            int ng2 = g2_alive ? g2_neighbors[gi2] : DEAD;
+    // For powered mode: check if ghosts are caught on Pacman's first move
+    // If so, they don't get to move on the second (simultaneous) move
+    bool g1_caught_move1 = powered && g1_alive && (np1 == g1);
+    bool g2_caught_move1 = powered && g2_alive && (np1 == g2);
+
+    // Adjust iteration: ghosts caught on move 1 have no valid moves
+    int g1_iter_count = g1_caught_move1 ? 1 : g1_moves;
+    int g2_iter_count = g2_caught_move1 ? 1 : g2_moves;
+
+    for (int gi1 = 0; gi1 < g1_iter_count; gi1++) {
+        for (int gi2 = 0; gi2 < g2_iter_count; gi2++) {
+            // Ghosts caught on move 1 are already DEAD for move 2
+            int ng1 = g1_caught_move1 ? DEAD : (g1_alive ? g1_neighbors[gi1] : DEAD);
+            int ng2 = g2_caught_move1 ? DEAD : (g2_alive ? g2_neighbors[gi2] : DEAD);
 
             int result_g1 = ng1;
             int result_g2 = ng2;
@@ -546,15 +576,21 @@ void get_optimal_ghost_moves(int p, int np1, int np2, int g1, int g2,
 
             if (powered) {
                 // Ghosts want to avoid being eaten
-                bool catch1_m1 = g1_alive && (np1 == g1);
-                bool catch2_m1 = g2_alive && (np1 == g2);
-                bool catch1_m2 = g1_alive && (np2 == ng1);
-                bool catch2_m2 = g2_alive && (np2 == ng2);
-                bool clip1 = g1_alive && (np1 == ng1 && g1 == np2);
-                bool clip2 = g2_alive && (np1 == ng2 && g2 == np2);
+                // Ghosts caught on first move are already handled above (ng1/ng2 = DEAD)
+                bool g1_alive_after_move1 = g1_alive && !g1_caught_move1;
+                bool g2_alive_after_move1 = g2_alive && !g2_caught_move1;
 
-                if (catch1_m1 || catch1_m2 || clip1) result_g1 = DEAD;
-                if (catch2_m1 || catch2_m2 || clip2) result_g2 = DEAD;
+                // Check if Pacman catches ghost on second move (simultaneous collision)
+                bool catch1_m2 = g1_alive_after_move1 && (np2 == ng1);
+                bool catch2_m2 = g2_alive_after_move1 && (np2 == ng2);
+
+                // Check for clipping on second move (Pacman and ghost swap positions)
+                bool clip1 = g1_alive_after_move1 && (np1 == ng1 && g1 == np2);
+                bool clip2 = g2_alive_after_move1 && (np1 == ng2 && g2 == np2);
+
+                // Determine final ghost states
+                if (g1_caught_move1 || catch1_m2 || clip1) result_g1 = DEAD;
+                if (g2_caught_move1 || catch2_m2 || clip2) result_g2 = DEAD;
             } else {
                 // Ghosts want to catch Pacman
                 bool clip1 = g1_alive && (p == ng1 && g1 == np1);
