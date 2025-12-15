@@ -59,6 +59,9 @@ def plot_safety_heatmap(csv_file, output_file=None):
     
     fig, ax = plt.subplots(figsize=(10, 8))
     
+    # Turn off grid for heatmap
+    ax.grid(False)
+    
     # Plot heatmap
     im = ax.imshow(maze, cmap=SAFETY_CMAP, vmin=0, vmax=100, aspect='equal')
     
@@ -66,7 +69,14 @@ def plot_safety_heatmap(csv_file, output_file=None):
     cbar = plt.colorbar(im, ax=ax, shrink=0.8)
     cbar.set_label('Safety Rate (%)', fontsize=12)
     
-    # Add text annotations
+    # Mark walls first (so they're behind text)
+    for r in range(maze.shape[0]):
+        for c in range(maze.shape[1]):
+            if np.isnan(maze[r, c]):
+                ax.add_patch(plt.Rectangle((c-0.5, r-0.5), 1, 1, 
+                                          fill=True, facecolor='#333333'))
+    
+    # Add text annotations and pellet markers
     for _, row in df.iterrows():
         r, c = int(row['row']), int(row['col'])
         rate = row['safety_rate']
@@ -85,13 +95,6 @@ def plot_safety_heatmap(csv_file, output_file=None):
             ax.text(c, r, f'{rate:.0f}', ha='center', va='center', 
                    fontsize=8, color=text_color)
     
-    # Mark walls
-    for r in range(maze.shape[0]):
-        for c in range(maze.shape[1]):
-            if np.isnan(maze[r, c]):
-                ax.add_patch(plt.Rectangle((c-0.5, r-0.5), 1, 1, 
-                                          fill=True, facecolor='#333333'))
-    
     ax.set_xlabel('Column')
     ax.set_ylabel('Row')
     ax.set_title('Pacman Safety Rate by Starting Position\n(Both ghosts alive, pellet exists)')
@@ -100,10 +103,11 @@ def plot_safety_heatmap(csv_file, output_file=None):
     ax.set_xticks(range(maze.shape[1]))
     ax.set_yticks(range(maze.shape[0]))
     
-    # Legend
-    pellet_patch = mpatches.Patch(edgecolor='blue', facecolor='none', 
+    # Legend positioned outside the plot for clarity
+    pellet_patch = mpatches.Patch(edgecolor='blue', facecolor='white', 
                                   linewidth=2, label='Pellet Position')
-    ax.legend(handles=[pellet_patch], loc='upper right')
+    ax.legend(handles=[pellet_patch], loc='upper left', bbox_to_anchor=(1.15, 1),
+              facecolor='white', edgecolor='gray', framealpha=1.0)
     
     plt.tight_layout()
     
@@ -151,34 +155,51 @@ def plot_ghost_config(csv_file, output_file=None):
     
     # ===== Left plot: Maze heatmap =====
     ax1 = axes[0]
+    ax1.grid(False)  # Turn off grid for heatmap
+    
     maze = np.full((max_row, max_col), np.nan)
     
     for _, row in df_ghosts.iterrows():
         maze[int(row['ghost1_row']), int(row['ghost1_col'])] = row['safety_rate']
     
-    # Use a diverging colormap centered around 50%
-    im = ax1.imshow(maze, cmap='RdYlGn', vmin=0, vmax=100, aspect='equal')
+    # Use consistent colormap with safety heatmap
+    im = ax1.imshow(maze, cmap=SAFETY_CMAP, vmin=0, vmax=100, aspect='equal')
     
     cbar = plt.colorbar(im, ax=ax1, shrink=0.8)
     cbar.set_label('Pacman Safety Rate (%)', fontsize=11)
     
-    # Mark walls and Pacman
+    # Mark walls first (behind other elements)
     for r in range(maze.shape[0]):
         for c in range(maze.shape[1]):
-            idx = r * maze.shape[1] + c
-            if r == pacman_r and c == pacman_c:
-                ax1.add_patch(plt.Rectangle((c-0.5, r-0.5), 1, 1, 
-                                          fill=True, facecolor='cyan', edgecolor='black', linewidth=2))
-                ax1.text(c, r, 'P', ha='center', va='center', fontsize=12, fontweight='bold', color='black')
-            elif np.isnan(maze[r, c]):
+            if np.isnan(maze[r, c]) and not (r == pacman_r and c == pacman_c):
                 ax1.add_patch(plt.Rectangle((c-0.5, r-0.5), 1, 1, 
                                           fill=True, facecolor='#333333'))
+    
+    # Add text annotations for safety values
+    for _, row in df_ghosts.iterrows():
+        r, c = int(row['ghost1_row']), int(row['ghost1_col'])
+        rate = row['safety_rate']
+        # Choose text color based on background
+        text_color = 'white' if rate < 50 else 'black'
+        ax1.text(c, r, f'{rate:.0f}', ha='center', va='center', 
+                fontsize=8, color=text_color)
+    
+    # Mark Pacman position
+    ax1.add_patch(plt.Rectangle((pacman_c-0.5, pacman_r-0.5), 1, 1, 
+                              fill=True, facecolor='cyan', edgecolor='black', linewidth=2))
+    ax1.text(pacman_c, pacman_r, 'P', ha='center', va='center', fontsize=12, fontweight='bold', color='black')
     
     ax1.set_xlabel('Column')
     ax1.set_ylabel('Row')
     ax1.set_title(f'Safety by Ghost 1 Position\n(Pacman at [{pacman_r},{pacman_c}], avg over Ghost 2)')
     ax1.set_xticks(range(maze.shape[1]))
     ax1.set_yticks(range(maze.shape[0]))
+    
+    # Legend for Pacman marker, positioned outside plot
+    pacman_patch = mpatches.Patch(facecolor='cyan', edgecolor='black', 
+                                  linewidth=2, label='Pacman Position')
+    ax1.legend(handles=[pacman_patch], loc='upper left', bbox_to_anchor=(1.02, 1),
+              facecolor='white', edgecolor='gray', framealpha=1.0)
     
     # ===== Right plot: Distance vs Safety scatter =====
     ax2 = axes[1]
