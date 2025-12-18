@@ -20,12 +20,12 @@ import os
 plt.style.use('seaborn-v0_8-whitegrid')
 plt.rcParams.update({
     'font.family': 'serif',
-    'font.size': 11,
-    'axes.labelsize': 12,
-    'axes.titlesize': 14,
-    'xtick.labelsize': 10,
-    'ytick.labelsize': 10,
-    'legend.fontsize': 10,
+    'font.size': 14,
+    'axes.labelsize': 15,
+    'axes.titlesize': 18,
+    'xtick.labelsize': 12,
+    'ytick.labelsize': 12,
+    'legend.fontsize': 12,
     'figure.figsize': (8, 6),
     'figure.dpi': 150,
     'savefig.dpi': 300,
@@ -67,7 +67,7 @@ def plot_safety_heatmap(csv_file, output_file=None):
     
     # Add colorbar
     cbar = plt.colorbar(im, ax=ax, shrink=0.8)
-    cbar.set_label('Safety Rate (%)', fontsize=12)
+    cbar.set_label('Safety Rate (%)', fontsize=15)
     
     # Mark walls first (so they're behind text)
     for r in range(maze.shape[0]):
@@ -90,14 +90,14 @@ def plot_safety_heatmap(csv_file, output_file=None):
             ax.add_patch(plt.Rectangle((c-0.5, r-0.5), 1, 1, 
                                        fill=False, edgecolor='blue', linewidth=3))
             ax.text(c, r, f'{rate:.0f}*', ha='center', va='center', 
-                   fontsize=9, fontweight='bold', color=text_color)
+                   fontsize=11, fontweight='bold', color=text_color)
         else:
             ax.text(c, r, f'{rate:.0f}', ha='center', va='center', 
-                   fontsize=8, color=text_color)
+                   fontsize=10, color=text_color)
     
     ax.set_xlabel('Column')
     ax.set_ylabel('Row')
-    ax.set_title('Pacman Safety Rate by Starting Position\n(Both ghosts alive, pellet exists)')
+    ax.set_title('Pacman Safety Rate by Starting Position\n(Both ghosts alive, pellet(s) exists)')
     
     # Set ticks
     ax.set_xticks(range(maze.shape[1]))
@@ -166,7 +166,7 @@ def plot_ghost_config(csv_file, output_file=None):
     im = ax1.imshow(maze, cmap=SAFETY_CMAP, vmin=0, vmax=100, aspect='equal')
     
     cbar = plt.colorbar(im, ax=ax1, shrink=0.8)
-    cbar.set_label('Pacman Safety Rate (%)', fontsize=11)
+    cbar.set_label('Pacman Safety Rate (%)', fontsize=14)
     
     # Mark walls first (behind other elements)
     for r in range(maze.shape[0]):
@@ -187,7 +187,7 @@ def plot_ghost_config(csv_file, output_file=None):
     # Mark Pacman position
     ax1.add_patch(plt.Rectangle((pacman_c-0.5, pacman_r-0.5), 1, 1, 
                               fill=True, facecolor='cyan', edgecolor='black', linewidth=2))
-    ax1.text(pacman_c, pacman_r, 'P', ha='center', va='center', fontsize=12, fontweight='bold', color='black')
+    ax1.text(pacman_c, pacman_r, 'P', ha='center', va='center', fontsize=15, fontweight='bold', color='black')
     
     ax1.set_xlabel('Column')
     ax1.set_ylabel('Row')
@@ -224,8 +224,8 @@ def plot_ghost_config(csv_file, output_file=None):
                     dist_stats['mean_safety'] + dist_stats['std_safety'],
                     alpha=0.2, color='red')
     
-    ax2.set_xlabel('Manhattan Distance from Pacman', fontsize=11)
-    ax2.set_ylabel('Pacman Safety Rate (%)', fontsize=11)
+    ax2.set_xlabel('Manhattan Distance from Pacman', fontsize=14)
+    ax2.set_ylabel('Pacman Safety Rate (%)', fontsize=14)
     ax2.set_title('Safety vs Ghost 1 Distance')
     ax2.legend(loc='lower right')
     ax2.set_xlim(0, dist_stats['distance'].max() + 1)
@@ -237,9 +237,9 @@ def plot_ghost_config(csv_file, output_file=None):
     if min_safe_dist is not None:
         ax2.axvline(x=min_safe_dist, color='green', linestyle='--', alpha=0.7)
         ax2.text(min_safe_dist + 0.2, 90, f'Safe zone: dist ≥ {min_safe_dist}', 
-                fontsize=9, color='green')
+                fontsize=11, color='green')
     
-    plt.suptitle('Ghost Proximity Analysis', fontsize=14, fontweight='bold', y=1.02)
+    plt.suptitle('Ghost Proximity Analysis', fontsize=18, fontweight='bold', y=1.02)
     plt.tight_layout()
     
     if output_file:
@@ -271,7 +271,7 @@ def plot_critical_positions(csv_file, output_file=None):
     # Plot 1: Average safe moves
     im1 = ax1.imshow(maze, cmap='RdYlGn', vmin=0, vmax=maze[~np.isnan(maze)].max(), aspect='equal')
     cbar1 = plt.colorbar(im1, ax=ax1, shrink=0.8)
-    cbar1.set_label('Avg Safe Moves', fontsize=11)
+    cbar1.set_label('Avg Safe Moves', fontsize=14)
     
     # Mark pellets and walls
     for _, row in df.iterrows():
@@ -295,7 +295,7 @@ def plot_critical_positions(csv_file, output_file=None):
     # Plot 2: Trapped percentage
     im2 = ax2.imshow(trapped_maze, cmap='Reds', vmin=0, vmax=100, aspect='equal')
     cbar2 = plt.colorbar(im2, ax=ax2, shrink=0.8)
-    cbar2.set_label('Trapped %', fontsize=11)
+    cbar2.set_label('Trapped %', fontsize=14)
     
     for _, row in df.iterrows():
         r, c = int(row['row']), int(row['col'])
@@ -315,7 +315,7 @@ def plot_critical_positions(csv_file, output_file=None):
     ax2.set_xticks(range(trapped_maze.shape[1]))
     ax2.set_yticks(range(trapped_maze.shape[0]))
     
-    plt.suptitle('Critical Position Analysis', fontsize=14, y=1.02)
+    plt.suptitle('Critical Position Analysis', fontsize=18, y=1.02)
     plt.tight_layout()
     
     if output_file:
@@ -376,7 +376,7 @@ def plot_threshold_analysis(csv_file, output_file=None):
                    label=f'Min safe threshold: {min_safe}')
         ax2.axvline(x=min_safe, color='green', linestyle=':', linewidth=2)
     
-    plt.suptitle('Safety Filter Threshold Tuning', fontsize=14, y=1.02)
+    plt.suptitle('Safety Filter Threshold Tuning', fontsize=18, y=1.02)
     plt.tight_layout()
     
     if output_file:
