@@ -62,3 +62,11 @@ target_link_libraries(simulation_opt PRIVATE ZLIB::ZLIB)
 #     analyze_values.cpp
 # )
 # target_link_libraries(analyze_values PRIVATE ZLIB::ZLIB)
+
+# === Evaluation tools ===
+
+# A* evaluation framework (with detailed stats and CSV output)
+add_executable(eval_astar
+    eval_astar.cpp
+)
+target_link_libraries(eval_astar PRIVATE ZLIB::ZLIB)
