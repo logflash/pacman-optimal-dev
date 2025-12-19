@@ -88,15 +88,15 @@ Evaluate A* pathfinding strategies against optimal and greedy ghost play:
 # Run full evaluation (all strategies vs all ghost types)
 ./eval_astar -v values_4p_corners.bin.gz -n 1000 -t 100 --all -o eval_results.csv
 
-# Generate visualizations
-python3 ../visualize_eval.py eval_results.csv
+# Generate all visualizations
+python3 ../visualize.py eval_results.csv --analysis-prefix analysis_4p --output-dir .
 ```
 
 **Pac-Man strategies evaluated:**
-- `Optimal`: Value iteration optimal policy
+- `Optimal`: Value iteration optimal policy (100% survival from safe states)
 - `A* + Safety Heuristic`: A* with penalty for unsafe positions
-- `A* + FRS Filter`: A* avoiding ghost-reachable positions
-- `A* + Safety Filter`: A* allowing only provably safe moves
+- `A* + FRS Filter`: A* avoiding forward-reachable ghost positions
+- `A* + Safety Filter`: A* allowing only provably safe moves (uses value table)
 
 **Ghost strategies:**
 - `Optimal Ghost`: Minimax optimal play from value iteration
@@ -106,10 +106,10 @@ python3 ../visualize_eval.py eval_results.csv
 - `survival_comparison.png`: Survival/win rates by strategy
 - `intervention_rates.png`: Filter intervention frequency
 - `survival_by_distance.png`: Survival vs initial ghost distance
-- `first_pellet_timing.png`: Time to first pellet consumption
-- `death_heatmap.png`: Death location heatmaps
-- `safety_states.png`: Safe vs unsafe state distribution
+- `death_heatmap.png`: Death location heatmaps (3x2 grid)
 - `win_time_distribution.png`: Win time statistics
+- `safety_heatmap.png`: Position-wise safety rates
+- `critical_positions.png`: Choke points and trapped positions
 
 ### Value Analysis Tools
 
@@ -119,9 +119,6 @@ python3 ../visualize_eval.py eval_results.csv
 
 # For multi-pellet configs (compressed)
 ./analyze_values -v values_4p_corners.bin.gz --export-all analysis_4p
-
-# Generate visualizations
-python3 ../visualize_analysis.py --prefix analysis
 ```
 
 **Available analyses:**
@@ -130,9 +127,3 @@ python3 ../visualize_analysis.py --prefix analysis
 - `--ghost`: Ghost configuration danger analysis
 - `--critical`: Choke point identification
 - `--threshold`: Safety filter threshold sensitivity
-
-**Output plots:**
-- `safety_heatmap.png`: Position-wise safety rates
-- `ghost_config.png`: Ghost proximity danger analysis
-- `critical_positions.png`: Choke points and trapped positions
-- `threshold_analysis.png`: Filter tuning curves
