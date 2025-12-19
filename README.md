@@ -80,28 +80,59 @@ Optimizations:
 - **Compact power state encoding**: Only valid states enumerated (512 → 106 states)
 - **gzip compression**: ~100-200× compression on value tables
 
-### Analysis Tools
+### A* Evaluation Framework
+
+Evaluate A* pathfinding strategies against optimal and greedy ghost play:
+
+```bash
+# Run full evaluation (all strategies vs all ghost types)
+./eval_astar -v values_4p_corners.bin.gz -n 1000 -t 100 --all -o eval_results.csv
+
+# Generate visualizations
+python3 ../visualize_eval.py eval_results.csv
+```
+
+**Pac-Man strategies evaluated:**
+- `Optimal`: Value iteration optimal policy
+- `A* + Safety Heuristic`: A* with penalty for unsafe positions
+- `A* + FRS Filter`: A* avoiding ghost-reachable positions
+- `A* + Safety Filter`: A* allowing only provably safe moves
+
+**Ghost strategies:**
+- `Optimal Ghost`: Minimax optimal play from value iteration
+- `Greedy BFS Ghost`: Each ghost independently BFS toward Pac-Man
+
+**Output plots:**
+- `survival_comparison.png`: Survival/win rates by strategy
+- `intervention_rates.png`: Filter intervention frequency
+- `survival_by_distance.png`: Survival vs initial ghost distance
+- `first_pellet_timing.png`: Time to first pellet consumption
+- `death_heatmap.png`: Death location heatmaps
+- `safety_states.png`: Safe vs unsafe state distribution
+- `win_time_distribution.png`: Win time statistics
+
+### Value Analysis Tools
 
 ```bash
 # Run all analyses and export CSVs
 ./analyze_values -v values.bin --all --export-all analysis
 
-# Run specific analysis
-./analyze_values -v values.bin --basic --distance --threshold
+# For multi-pellet configs (compressed)
+./analyze_values -v values_4p_corners.bin.gz --export-all analysis_4p
 
-# Generate visualizations (requires Python with pandas, matplotlib)
-python3 ../visualize_analysis.py --prefix analysis --format png
+# Generate visualizations
+python3 ../visualize_analysis.py --prefix analysis
 ```
 
 **Available analyses:**
 - `--basic`: Safe/unsafe state counts, average TTR
-- `--distance`: Safety rate vs ghost distance (Manhattan and BFS)
-- `--position`: Per-cell safety rates with maze visualization
+- `--position`: Per-cell safety rates (heatmap)
+- `--ghost`: Ghost configuration danger analysis
+- `--critical`: Choke point identification
 - `--threshold`: Safety filter threshold sensitivity
-- `--pellet`: Pellet reachability analysis
-- `--power`: Power state impact on safety
 
-**Exports:**
-- `*_heatmap.csv`: Position-wise safety rates
-- `*_distance.csv`: Distance vs safety data
-- `*_threshold.csv`: Threshold tuning data
+**Output plots:**
+- `safety_heatmap.png`: Position-wise safety rates
+- `ghost_config.png`: Ghost proximity danger analysis
+- `critical_positions.png`: Choke points and trapped positions
+- `threshold_analysis.png`: Filter tuning curves
