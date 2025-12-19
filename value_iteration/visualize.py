@@ -1,22 +1,27 @@
 #!/usr/bin/env python3
 """
-Visualization for A* Evaluation Results
+Combined Visualization Script for Pac-Man Value Iteration Analysis
 
 Generates plots for:
-1. Survival rate comparison
+1. Survival rate comparison (bar chart)
 2. Intervention rates (FRS vs Safety filter)
 3. Survival rate vs initial ghost distance
-4. Time-to-first-pellet distribution
-5. Death location heatmap
-6. Safety state analysis
-7. Win time distribution
+4. Win time distribution
+5. Death location heatmap (3x2 grid: strategies x ghost types)
+6. Safety heatmap (starting position analysis)
+7. Critical positions (choke points)
+
+Usage:
+    python visualize.py <eval_results.csv> [--analysis-prefix PREFIX] [--output-dir DIR]
 """
 
+import argparse
 import pandas as pd
-import matplotlib.pyplot as plt
 import numpy as np
-import sys
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 import os
+import sys
 
 # Global style for column-style report
 plt.style.use('seaborn-v0_8-whitegrid')
@@ -31,9 +36,16 @@ plt.rcParams['legend.frameon'] = True
 plt.rcParams['legend.facecolor'] = 'white'
 plt.rcParams['legend.edgecolor'] = 'gray'
 plt.rcParams['legend.framealpha'] = 0.9
+plt.rcParams['figure.dpi'] = 150
+plt.rcParams['savefig.dpi'] = 150
+plt.rcParams['savefig.bbox'] = 'tight'
 
-# Relative font size for bar annotations (scales with figure)
+# Relative font size for bar annotations
 BAR_LABEL_FONTSIZE = 15
+
+# Maze dimensions
+MAZE_ROWS = 12
+MAZE_COLS = 12
 
 # Consistent color palette for strategies
 STRATEGY_COLORS = {
@@ -52,7 +64,6 @@ GHOST_COLORS = {
 # Strategy name mapping for consistent display
 STRATEGY_NAMES = {
     'Optimal': 'Optimal Pacman',
-    'A*_Basic': 'A* Basic',
     'A*_Safety_Heuristic': 'A* + Safety Heuristic',
     'A*_FRS_Filter': 'A* + FRS Filter',
     'A*_Safety_Filter': 'A* + Safety Filter',
@@ -64,37 +75,49 @@ GHOST_NAMES = {
     'Greedy_BFS': 'Greedy BFS Ghost',
 }
 
-# Core strategies to display (excluding A* Basic which is just for reference)
-CORE_STRATEGIES = ['Optimal', 'A*_Safety_Heuristic', 'A*_FRS_Filter', 'A*_Safety_Filter']
+# Core strategies to display (A* approaches only, excluding Optimal baseline for some plots)
+ASTAR_STRATEGIES = ['A*_Safety_Heuristic', 'A*_FRS_Filter', 'A*_Safety_Filter']
+CORE_STRATEGIES = ['Optimal'] + ASTAR_STRATEGIES
+
+# Use RdYlGn colormap for safety (red=unsafe, green=safe)
+SAFETY_CMAP = 'RdYlGn'
+
 
 def get_strategy_color(strategy):
     """Get consistent color for a strategy."""
     name = STRATEGY_NAMES.get(strategy, strategy)
     return STRATEGY_COLORS.get(name, '#95a5a6')
 
+
 def get_display_name(strategy):
     """Get display name for a strategy."""
     return STRATEGY_NAMES.get(strategy, strategy)
 
+
 def get_ghost_display_name(ghost):
     """Get display name for a ghost strategy."""
     return GHOST_NAMES.get(ghost, ghost)
+
 
 def get_ghost_color(ghost):
     """Get consistent color for a ghost strategy."""
     name = GHOST_NAMES.get(ghost, ghost)
     return GHOST_COLORS.get(name, '#95a5a6')
 
+
 def load_data(csv_file):
     """Load evaluation results from CSV."""
-    df = pd.read_csv(csv_file)
-    return df
+    return pd.read_csv(csv_file)
+
+
+# =============================================================================
+# Evaluation Plots
+# =============================================================================
 
 def plot_survival_comparison(df, output_dir):
     """Bar chart comparing survival rates across strategies and ghost types."""
     ghost_types = df['ghost_strategy'].unique()
     
-    # Vertical layout: 2 rows, 1 column
     fig, axes = plt.subplots(2, 1, figsize=(12, 14))
     
     for idx, ghost in enumerate(ghost_types):
@@ -119,7 +142,7 @@ def plot_survival_comparison(df, output_dir):
         ax.set_title(f'Performance vs {get_ghost_display_name(ghost)}')
         ax.set_xticks(x)
         ax.set_xticklabels(strategies, rotation=30, ha='right')
-        ax.legend(loc='upper right', fancybox=True, shadow=True)
+        ax.legend(loc='lower right', fancybox=True, shadow=True)
         ax.set_ylim(0, 115)
         
         for bar in bars1:
@@ -141,10 +164,10 @@ def plot_survival_comparison(df, output_dir):
     plt.close()
     print("  Created: survival_comparison.png")
 
+
 def plot_intervention_rates(df, output_dir):
     """Plot intervention rates for FRS and Safety filter strategies."""
-    # Vertical layout: 2 rows, 1 column
-    fig, axes = plt.subplots(2, 1, figsize=(10, 12))
+    fig, axes = plt.subplots(2, 1, figsize=(10, 14))
     
     # FRS interventions
     ax = axes[0]
@@ -165,6 +188,13 @@ def plot_intervention_rates(df, output_dir):
                        xy=(bar.get_x() + bar.get_width() / 2, height),
                        xytext=(0, 3), textcoords="offset points",
                        ha='center', va='bottom', fontsize=BAR_LABEL_FONTSIZE)
+        # Set ylim with headroom for labels
+        max_val = max(intervention_rate) if len(intervention_rate) > 0 else 1
+        ax.set_ylim(0, max_val * 1.25)
+    else:
+        ax.text(0.5, 0.5, 'No FRS Filter data', ha='center', va='center', 
+                transform=ax.transAxes, fontsize=14)
+        ax.set_title('A* + FRS Filter: Intervention Rate')
     
     # Safety filter interventions
     ax = axes[1]
@@ -189,7 +219,7 @@ def plot_intervention_rates(df, output_dir):
         ax.set_title('A* + Safety Filter: Intervention Rates\n(% of ticks where filter acted)')
         ax.set_xticks(x)
         ax.set_xticklabels(ghosts)
-        ax.legend(loc='upper right', fancybox=True, shadow=True)
+        ax.legend(loc='lower right', fancybox=True, shadow=True)
         
         for bar in bars1:
             height = bar.get_height()
@@ -200,16 +230,24 @@ def plot_intervention_rates(df, output_dir):
                            ha='center', va='bottom', fontsize=BAR_LABEL_FONTSIZE)
         for bar in bars2:
             height = bar.get_height()
-            if height > 0.1:
+            if height > 0.01:
                 ax.annotate(f'{height:.2f}%',
                            xy=(bar.get_x() + bar.get_width() / 2, height),
                            xytext=(0, 3), textcoords="offset points",
                            ha='center', va='bottom', fontsize=BAR_LABEL_FONTSIZE)
+        # Set ylim with headroom for labels
+        max_val = max(max(intervention_rate), max(fallback_rate)) if len(intervention_rate) > 0 else 1
+        ax.set_ylim(0, max_val * 1.3)
+    else:
+        ax.text(0.5, 0.5, 'No Safety Filter data', ha='center', va='center', 
+                transform=ax.transAxes, fontsize=14)
+        ax.set_title('A* + Safety Filter: Intervention Rates')
     
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, 'intervention_rates.png'), dpi=150, bbox_inches='tight')
     plt.close()
     print("  Created: intervention_rates.png")
+
 
 def plot_survival_by_distance(df, output_dir):
     """Plot survival rate vs initial ghost distance."""
@@ -219,7 +257,6 @@ def plot_survival_by_distance(df, output_dir):
     
     ghost_types = df['ghost_strategy'].unique()
     
-    # Vertical layout: 2 rows, 1 column
     fig, axes = plt.subplots(2, 1, figsize=(12, 14))
     
     for idx, ghost in enumerate(ghost_types):
@@ -257,188 +294,6 @@ def plot_survival_by_distance(df, output_dir):
     plt.close()
     print("  Created: survival_by_distance.png")
 
-def plot_first_pellet_timing(df, output_dir):
-    """Plot average time to first pellet, split by ghost type."""
-    # Use core strategies only
-    subset = df[df['pacman_strategy'].isin(CORE_STRATEGIES)]
-    
-    if len(subset) == 0 or 'avg_first_pellet_tick' not in subset.columns:
-        print("  Skipping first pellet timing (no data)")
-        return
-    
-    # Vertical layout: 2 rows, 1 column
-    fig, axes = plt.subplots(2, 1, figsize=(12, 12))
-    
-    for idx, ghost_type in enumerate(['Optimal', 'Greedy_BFS']):
-        ax = axes[idx]
-        ghost_subset = subset[subset['ghost_strategy'] == ghost_type]
-        
-        labels = []
-        values = []
-        colors = []
-        
-        for _, row in ghost_subset.iterrows():
-            if row['avg_first_pellet_tick'] >= 0:
-                strategy_name = get_display_name(row['pacman_strategy'])
-                labels.append(strategy_name)
-                values.append(row['avg_first_pellet_tick'])
-                colors.append(get_strategy_color(row['pacman_strategy']))
-        
-        if not values:
-            ax.text(0.5, 0.5, f'No data vs {get_ghost_display_name(ghost_type)}',
-                   ha='center', va='center', transform=ax.transAxes, fontsize=14)
-            ax.set_title(f'Time to First Pellet vs {get_ghost_display_name(ghost_type)}')
-            continue
-        
-        x = np.arange(len(labels))
-        bars = ax.bar(x, values, color=colors, edgecolor='black', linewidth=1)
-        ax.set_xlabel('Pac-Man Strategy')
-        ax.set_ylabel('Average Tick of First Pellet')
-        ax.set_title(f'Time to First Pellet vs {get_ghost_display_name(ghost_type)}\n(Later = more strategic waiting)')
-        ax.set_xticks(x)
-        ax.set_xticklabels(labels, rotation=30, ha='right')
-        
-        for bar in bars:
-            height = bar.get_height()
-            ax.annotate(f'{height:.1f}',
-                       xy=(bar.get_x() + bar.get_width() / 2, height),
-                       xytext=(0, 3), textcoords="offset points",
-                       ha='center', va='bottom', fontsize=BAR_LABEL_FONTSIZE)
-    
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, 'first_pellet_timing.png'), dpi=150, bbox_inches='tight')
-    plt.close()
-    print("  Created: first_pellet_timing.png")
-
-def plot_death_heatmap(deaths_csv, maze_csv, output_dir):
-    """Plot death location heatmap with walls visualized."""
-    if not os.path.exists(deaths_csv):
-        print("  Skipping death heatmap (no deaths CSV)")
-        return
-    
-    df = pd.read_csv(deaths_csv)
-    
-    # Get all valid positions from the deaths CSV
-    valid_positions = set()
-    for _, row in df.iterrows():
-        valid_positions.add((int(row['row']), int(row['col'])))
-    
-    # Get strategy columns and filter to core strategies
-    all_strategy_cols = [c for c in df.columns if c not in ['row', 'col']]
-    
-    # Map column names to display names and filter
-    strategy_cols = []
-    display_names = []
-    for col in all_strategy_cols:
-        parts = col.split('_vs_')
-        if len(parts) == 2:
-            pac_strategy = parts[0]
-            ghost_strategy = parts[1]
-            if pac_strategy in CORE_STRATEGIES:
-                strategy_cols.append(col)
-                display_names.append(f"{get_display_name(pac_strategy)}\nvs {get_ghost_display_name(ghost_strategy)}")
-    
-    if not strategy_cols:
-        strategy_cols = all_strategy_cols
-        display_names = [c.replace('_vs_', '\nvs ') for c in strategy_cols]
-    
-    n_strategies = len(strategy_cols)
-    cols = min(4, n_strategies)
-    rows = (n_strategies + cols - 1) // cols
-    
-    fig, axes = plt.subplots(rows, cols, figsize=(5*cols, 5*rows))
-    if n_strategies == 1:
-        axes = [axes]
-    elif rows == 1:
-        axes = list(axes)
-    else:
-        axes = axes.flatten()
-    
-    for idx, (strategy, display_name) in enumerate(zip(strategy_cols, display_names)):
-        ax = axes[idx]
-        ax.set_facecolor('#333333')  # Dark background for walls
-        
-        # Create 12x12 grid with NaN for walls
-        grid = np.full((12, 12), np.nan)
-        for _, row in df.iterrows():
-            r, c = int(row['row']), int(row['col'])
-            grid[r, c] = row[strategy]
-        
-        # Plot heatmap without grid (green=0 deaths, red=many deaths)
-        im = ax.imshow(grid, cmap='RdYlGn_r', interpolation='nearest')
-        ax.grid(False)  # Remove grid overlay
-        
-        # Draw walls as dark rectangles
-        for r in range(12):
-            for c in range(12):
-                if (r, c) not in valid_positions:
-                    ax.add_patch(plt.Rectangle((c-0.5, r-0.5), 1, 1, 
-                                              fill=True, facecolor='#333333', edgecolor='#333333'))
-        
-        ax.set_title(display_name, fontsize=16, fontweight='bold')
-        ax.set_xlabel('Column', fontsize=14)
-        ax.set_ylabel('Row', fontsize=14)
-        ax.tick_params(labelsize=12)
-        ax.set_xticks(range(12))
-        ax.set_yticks(range(12))
-        cbar = plt.colorbar(im, ax=ax)
-        cbar.set_label('Deaths', fontsize=14)
-        cbar.ax.tick_params(labelsize=12)
-    
-    # Hide unused subplots
-    for idx in range(n_strategies, len(axes)):
-        axes[idx].axis('off')
-    
-    plt.suptitle('Death Location Heatmaps', fontsize=22, fontweight='bold')
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, 'death_heatmap.png'), dpi=150, bbox_inches='tight')
-    plt.close()
-    print("  Created: death_heatmap.png")
-
-def plot_safety_states(df, output_dir):
-    """Plot percentage of time in safe vs unsafe states."""
-    if 'pct_in_safe_state' not in df.columns:
-        print("  Skipping safety states (no data)")
-        return
-    
-    ghost_types = df['ghost_strategy'].unique()
-    
-    # Vertical layout: 2 rows, 1 column
-    fig, axes = plt.subplots(2, 1, figsize=(12, 14))
-    
-    for idx, ghost in enumerate(ghost_types):
-        ax = axes[idx]
-        subset = df[(df['ghost_strategy'] == ghost) & (df['pacman_strategy'].isin(CORE_STRATEGIES))]
-        
-        strategies = [get_display_name(s) for s in subset['pacman_strategy']]
-        safe_pct = subset['pct_in_safe_state'].values
-        unsafe_pct = subset['pct_in_unsafe_state'].values
-        colors = [get_strategy_color(s) for s in subset['pacman_strategy']]
-        
-        x = np.arange(len(strategies))
-        width = 0.6
-        
-        bars1 = ax.bar(x, safe_pct, width, label='Safe', color='#2ecc71', edgecolor='black', linewidth=1)
-        bars2 = ax.bar(x, unsafe_pct, width, bottom=safe_pct, label='Unsafe', 
-                       color='#e74c3c', edgecolor='black', linewidth=1)
-        
-        for i, (bar, safe_val) in enumerate(zip(bars1, safe_pct)):
-            ax.annotate(f'{safe_val:.0f}%',
-                       xy=(bar.get_x() + bar.get_width() / 2, safe_val / 2),
-                       ha='center', va='center', fontsize=BAR_LABEL_FONTSIZE, color='white')
-        
-        ax.set_xlabel('Pac-Man Strategy')
-        ax.set_ylabel('% of Time')
-        ax.set_title(f'Safety State Distribution vs {get_ghost_display_name(ghost)}')
-        ax.set_xticks(x)
-        ax.set_xticklabels(strategies, rotation=30, ha='right')
-        ax.legend(loc='upper right', fancybox=True, shadow=True)
-        ax.set_ylim(0, 110)
-    
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, 'safety_states.png'), dpi=150, bbox_inches='tight')
-    plt.close()
-    print("  Created: safety_states.png")
 
 def plot_win_time_distribution(wins_csv, output_dir):
     """Plot win time distribution as grouped bar chart with median and count."""
@@ -487,8 +342,7 @@ def plot_win_time_distribution(wins_csv, output_dir):
         print("  Skipping win time distribution (no data)")
         return
     
-    # Create vertical layout with 2 subplots
-    fig, axes = plt.subplots(2, 1, figsize=(12, 12))
+    fig, axes = plt.subplots(2, 1, figsize=(12, 14))
     
     for idx, ghost_type in enumerate(['Optimal', 'Greedy_BFS']):
         ax = axes[idx]
@@ -517,19 +371,267 @@ def plot_win_time_distribution(wins_csv, output_dir):
         ax.set_xticks(x)
         ax.set_xticklabels(labels, rotation=30, ha='right')
         
-        # Add median value and win count on top of bars
         for i, (bar, median, count) in enumerate(zip(bars, medians, counts)):
             height = bar.get_height()
             ax.annotate(f'{median:.0f} ticks\n({count} wins)',
                        xy=(bar.get_x() + bar.get_width() / 2, height),
                        xytext=(0, 5), textcoords="offset points",
                        ha='center', va='bottom', fontsize=BAR_LABEL_FONTSIZE)
+        
+        # Set ylim with headroom for labels
+        max_val = max(medians) if medians else 1
+        ax.set_ylim(0, max_val * 1.35)
     
     plt.suptitle('Win Time Statistics by Strategy', fontsize=16, fontweight='bold')
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, 'win_time_distribution.png'), dpi=150, bbox_inches='tight')
     plt.close()
     print("  Created: win_time_distribution.png")
+
+
+def plot_death_heatmap(deaths_csv, output_dir):
+    """Plot death location heatmap in 3x2 grid (strategies x ghost types) with cell values."""
+    if not os.path.exists(deaths_csv):
+        print("  Skipping death heatmap (no deaths CSV)")
+        return
+    
+    df = pd.read_csv(deaths_csv)
+    
+    # Get all valid positions from the deaths CSV
+    valid_positions = set()
+    for _, row in df.iterrows():
+        valid_positions.add((int(row['row']), int(row['col'])))
+    
+    # Define the 3 A* strategies and 2 ghost types for the grid
+    strategies = ASTAR_STRATEGIES
+    ghost_types = ['Optimal', 'Greedy_BFS']
+    
+    # Create 3 rows x 2 columns figure
+    fig, axes = plt.subplots(3, 2, figsize=(12, 16))
+    
+    for row_idx, strategy in enumerate(strategies):
+        for col_idx, ghost in enumerate(ghost_types):
+            ax = axes[row_idx, col_idx]
+            ax.set_facecolor('#333333')  # Dark background for walls
+            ax.grid(False)
+            
+            col_name = f"{strategy}_vs_{ghost}"
+            
+            if col_name not in df.columns:
+                ax.text(0.5, 0.5, 'No data', ha='center', va='center', 
+                       transform=ax.transAxes, fontsize=14, color='white')
+                ax.set_title(f'{get_display_name(strategy)}\nvs {get_ghost_display_name(ghost)}', 
+                            fontsize=14, fontweight='bold')
+                continue
+            
+            # Create grid with NaN for walls
+            grid = np.full((MAZE_ROWS, MAZE_COLS), np.nan)
+            for _, data_row in df.iterrows():
+                r, c = int(data_row['row']), int(data_row['col'])
+                grid[r, c] = data_row[col_name]
+            
+            # Get max value for colormap scaling (excluding NaN)
+            max_val = np.nanmax(grid) if np.nanmax(grid) > 0 else 1
+            
+            # Plot heatmap (green=0 deaths, red=many deaths)
+            im = ax.imshow(grid, cmap='RdYlGn_r', interpolation='nearest', vmin=0, vmax=max_val)
+            
+            # Draw walls and add text values
+            for r in range(MAZE_ROWS):
+                for c in range(MAZE_COLS):
+                    if (r, c) not in valid_positions:
+                        ax.add_patch(plt.Rectangle((c-0.5, r-0.5), 1, 1, 
+                                                  fill=True, facecolor='#333333', edgecolor='#333333'))
+                    else:
+                        val = grid[r, c]
+                        if not np.isnan(val):
+                            # Always use black text for readability
+                            ax.text(c, r, f'{int(val)}', ha='center', va='center', 
+                                   fontsize=8, color='black', fontweight='bold')
+            
+            # Title shows strategy and ghost type
+            if row_idx == 0:
+                ax.set_title(f'{get_ghost_display_name(ghost)}', fontsize=16, fontweight='bold')
+            
+            # Row labels on the left
+            if col_idx == 0:
+                ax.set_ylabel(f'{get_display_name(strategy)}', fontsize=14, fontweight='bold')
+            
+            ax.set_xticks(range(MAZE_COLS))
+            ax.set_yticks(range(MAZE_ROWS))
+            ax.tick_params(labelsize=8)
+            
+            # Add colorbar
+            cbar = plt.colorbar(im, ax=ax, shrink=0.8)
+            cbar.set_label('Deaths', fontsize=10)
+            cbar.ax.tick_params(labelsize=8)
+    
+    plt.suptitle('Death Location Heatmaps by Strategy and Ghost Type', fontsize=20, fontweight='bold', y=1.02)
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, 'death_heatmap.png'), dpi=150, bbox_inches='tight')
+    plt.close()
+    print("  Created: death_heatmap.png")
+
+
+# =============================================================================
+# Analysis Plots (from value table analysis)
+# =============================================================================
+
+def plot_safety_heatmap(csv_file, output_dir):
+    """Generate maze heatmap showing safety rate per position."""
+    if not os.path.exists(csv_file):
+        print(f"  Skipping safety heatmap ({csv_file} not found)")
+        return
+    
+    df = pd.read_csv(csv_file)
+    
+    # Create grid
+    maze = np.full((MAZE_ROWS, MAZE_COLS), np.nan)
+    for _, row in df.iterrows():
+        maze[int(row['row']), int(row['col'])] = row['safety_rate']
+    
+    fig, ax = plt.subplots(figsize=(10, 8))
+    ax.set_facecolor('#333333')
+    ax.grid(False)
+    
+    im = ax.imshow(maze, cmap=SAFETY_CMAP, vmin=0, vmax=100, aspect='equal')
+    
+    cbar = plt.colorbar(im, ax=ax, shrink=0.8)
+    cbar.set_label('Safety Rate (%)', fontsize=16)
+    cbar.ax.tick_params(labelsize=12)
+    
+    # Mark walls and add text
+    for r in range(maze.shape[0]):
+        for c in range(maze.shape[1]):
+            if np.isnan(maze[r, c]):
+                ax.add_patch(plt.Rectangle((c-0.5, r-0.5), 1, 1, 
+                                          fill=True, facecolor='#333333', edgecolor='#333333'))
+    
+    for _, row in df.iterrows():
+        r, c = int(row['row']), int(row['col'])
+        rate = row['safety_rate']
+        is_pellet = row['is_pellet'] == 1
+        
+        text_color = 'white' if rate < 50 else 'black'
+        
+        if is_pellet:
+            ax.add_patch(plt.Rectangle((c-0.5, r-0.5), 1, 1, 
+                                       fill=False, edgecolor='#3498db', linewidth=3))
+            ax.text(c, r, f'{rate:.0f}*', ha='center', va='center', 
+                   fontsize=11, fontweight='bold', color=text_color)
+        else:
+            ax.text(c, r, f'{rate:.0f}', ha='center', va='center', 
+                   fontsize=10, color=text_color)
+    
+    ax.set_xlabel('Column')
+    ax.set_ylabel('Row')
+    ax.set_title('Pac-Man Safety Rate by Starting Position\n(Both ghosts alive, pellet(s) exist)')
+    ax.set_xticks(range(maze.shape[1]))
+    ax.set_yticks(range(maze.shape[0]))
+    
+    pellet_patch = mpatches.Patch(edgecolor='#3498db', facecolor='white', 
+                                  linewidth=2, label='Pellet Position')
+    ax.legend(handles=[pellet_patch], loc='upper left', bbox_to_anchor=(1.15, 1),
+              fancybox=True, shadow=True)
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, 'safety_heatmap.png'), bbox_inches='tight')
+    plt.close()
+    print("  Created: safety_heatmap.png")
+
+
+def plot_critical_positions(csv_file, output_dir):
+    """Plot critical positions (choke points) heatmap with cell values."""
+    if not os.path.exists(csv_file):
+        print(f"  Skipping critical positions ({csv_file} not found)")
+        return
+    
+    df = pd.read_csv(csv_file)
+    
+    # Create grids
+    maze = np.full((MAZE_ROWS, MAZE_COLS), np.nan)
+    trapped_maze = np.full((MAZE_ROWS, MAZE_COLS), np.nan)
+    
+    for _, row in df.iterrows():
+        maze[int(row['row']), int(row['col'])] = row['avg_safe_moves']
+        trapped_maze[int(row['row']), int(row['col'])] = row['trapped_pct']
+    
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 14))
+    
+    # Plot 1: Average safe moves
+    ax1.set_facecolor('#333333')
+    ax1.grid(False)
+    max_val = np.nanmax(maze) if np.nanmax(maze) > 0 else 1
+    im1 = ax1.imshow(maze, cmap='RdYlGn', vmin=0, vmax=max_val, aspect='equal')
+    cbar1 = plt.colorbar(im1, ax=ax1, shrink=0.8)
+    cbar1.set_label('Avg Safe Moves', fontsize=14)
+    cbar1.ax.tick_params(labelsize=12)
+    
+    # Mark pellets, walls, and add text values
+    for _, row in df.iterrows():
+        r, c = int(row['row']), int(row['col'])
+        val = row['avg_safe_moves']
+        if row['is_pellet'] == 1:
+            ax1.add_patch(plt.Rectangle((c-0.5, r-0.5), 1, 1, 
+                                       fill=False, edgecolor='#3498db', linewidth=3))
+        # Add text value
+        text_color = 'white' if val < max_val * 0.5 else 'black'
+        ax1.text(c, r, f'{val:.1f}', ha='center', va='center', 
+                fontsize=8, color=text_color)
+    
+    for r in range(maze.shape[0]):
+        for c in range(maze.shape[1]):
+            if np.isnan(maze[r, c]):
+                ax1.add_patch(plt.Rectangle((c-0.5, r-0.5), 1, 1, 
+                                          fill=True, facecolor='#333333', edgecolor='#333333'))
+    
+    ax1.set_xlabel('Column')
+    ax1.set_ylabel('Row')
+    ax1.set_title('Average Safe Moves per Position\n(Higher = Safer)')
+    ax1.set_xticks(range(maze.shape[1]))
+    ax1.set_yticks(range(maze.shape[0]))
+    
+    # Plot 2: Trapped percentage
+    ax2.set_facecolor('#333333')
+    ax2.grid(False)
+    im2 = ax2.imshow(trapped_maze, cmap='Reds', vmin=0, vmax=100, aspect='equal')
+    cbar2 = plt.colorbar(im2, ax=ax2, shrink=0.8)
+    cbar2.set_label('Trapped %', fontsize=14)
+    cbar2.ax.tick_params(labelsize=12)
+    
+    for _, row in df.iterrows():
+        r, c = int(row['row']), int(row['col'])
+        val = row['trapped_pct']
+        if row['is_pellet'] == 1:
+            ax2.add_patch(plt.Rectangle((c-0.5, r-0.5), 1, 1, 
+                                       fill=False, edgecolor='#3498db', linewidth=3))
+        # Add text value
+        text_color = 'white' if val > 50 else 'black'
+        ax2.text(c, r, f'{val:.0f}', ha='center', va='center', 
+                fontsize=8, color=text_color)
+    
+    for r in range(trapped_maze.shape[0]):
+        for c in range(trapped_maze.shape[1]):
+            if np.isnan(trapped_maze[r, c]):
+                ax2.add_patch(plt.Rectangle((c-0.5, r-0.5), 1, 1, 
+                                          fill=True, facecolor='#333333', edgecolor='#333333'))
+    
+    ax2.set_xlabel('Column')
+    ax2.set_ylabel('Row')
+    ax2.set_title('Trapped Configurations %\n(Higher = More Dangerous)')
+    ax2.set_xticks(range(trapped_maze.shape[1]))
+    ax2.set_yticks(range(trapped_maze.shape[0]))
+    
+    plt.suptitle('Critical Position Analysis', fontsize=20, fontweight='bold', y=1.02)
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, 'critical_positions.png'), bbox_inches='tight')
+    plt.close()
+    print("  Created: critical_positions.png")
+
+
+# =============================================================================
+# Summary
+# =============================================================================
 
 def create_summary_table(df, output_dir):
     """Create a summary markdown table."""
@@ -545,7 +647,6 @@ def create_summary_table(df, output_dir):
     
     summary.append("## Key Findings\n\n")
     
-    # Best strategy per ghost type
     for ghost in df['ghost_strategy'].unique():
         subset = df[(df['ghost_strategy'] == ghost) & (df['pacman_strategy'].isin(CORE_STRATEGIES))]
         if len(subset) == 0:
@@ -558,8 +659,8 @@ def create_summary_table(df, output_dir):
         summary.append(f"- **Avg Survival**: {best['avg_survival_time']:.1f} ticks\n\n")
     
     summary.append("## Full Results Table\n\n")
-    summary.append("| Strategy | Ghost | Survival % | Win % | Avg Time | Safe % | Interventions |\n")
-    summary.append("|----------|-------|------------|-------|----------|--------|---------------|\n")
+    summary.append("| Strategy | Ghost | Survival % | Win % | Avg Time | Interventions |\n")
+    summary.append("|----------|-------|------------|-------|----------|---------------|\n")
     
     for _, row in df[df['pacman_strategy'].isin(CORE_STRATEGIES)].iterrows():
         intervention_info = ""
@@ -570,58 +671,63 @@ def create_summary_table(df, output_dir):
         else:
             intervention_info = "-"
         
-        safe_pct = row.get('pct_in_safe_state', 0)
-        
         summary.append(f"| {get_display_name(row['pacman_strategy'])} | {get_ghost_display_name(row['ghost_strategy'])} | "
                       f"{row['survival_rate']*100:.1f}% | {row['win_rate']*100:.1f}% | "
-                      f"{row['avg_survival_time']:.1f} | {safe_pct:.1f}% | {intervention_info} |\n")
+                      f"{row['avg_survival_time']:.1f} | {intervention_info} |\n")
     
     with open(os.path.join(output_dir, 'summary.md'), 'w') as f:
         f.writelines(summary)
     
     print("  Created: summary.md")
 
+
+# =============================================================================
+# Main
+# =============================================================================
+
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python visualize_eval.py <eval_results.csv> [output_dir]")
-        print("\nGenerates visualizations from A* evaluation results.")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description='Visualize Pac-Man evaluation and analysis results')
+    parser.add_argument('eval_csv', nargs='?', help='Evaluation results CSV file')
+    parser.add_argument('--analysis-prefix', type=str, help='Prefix for analysis CSV files (e.g., "analysis_4p")')
+    parser.add_argument('--output-dir', type=str, default='.', help='Output directory for figures')
     
-    csv_file = sys.argv[1]
-    output_dir = sys.argv[2] if len(sys.argv) > 2 else os.path.dirname(csv_file) or '.'
+    args = parser.parse_args()
     
-    if not os.path.exists(csv_file):
-        print(f"Error: {csv_file} not found")
-        sys.exit(1)
-    
+    output_dir = args.output_dir
     os.makedirs(output_dir, exist_ok=True)
     
-    print(f"Loading data from {csv_file}...")
-    df = load_data(csv_file)
-    print(f"  Found {len(df)} evaluation results")
+    # Process evaluation results if provided
+    if args.eval_csv and os.path.exists(args.eval_csv):
+        print(f"Loading evaluation data from {args.eval_csv}...")
+        df = load_data(args.eval_csv)
+        print(f"  Found {len(df)} evaluation results")
+        
+        base_name = args.eval_csv.rsplit('.', 1)[0]
+        deaths_csv = base_name + "_deaths.csv"
+        wins_csv = base_name + "_wins.csv"
+        
+        print(f"\nGenerating evaluation visualizations in {output_dir}/...")
+        
+        plot_survival_comparison(df, output_dir)
+        plot_intervention_rates(df, output_dir)
+        plot_survival_by_distance(df, output_dir)
+        plot_win_time_distribution(wins_csv, output_dir)
+        plot_death_heatmap(deaths_csv, output_dir)
+        create_summary_table(df, output_dir)
     
-    # Derive additional CSV filenames
-    base_name = csv_file.rsplit('.', 1)[0]
-    deaths_csv = base_name + "_deaths.csv"
-    wins_csv = base_name + "_wins.csv"
-    
-    print(f"\nGenerating visualizations in {output_dir}/...")
-    
-    # Core plots
-    plot_survival_comparison(df, output_dir)
-    plot_intervention_rates(df, output_dir)
-    
-    # New analysis plots
-    plot_survival_by_distance(df, output_dir)
-    plot_first_pellet_timing(df, output_dir)
-    plot_death_heatmap(deaths_csv, None, output_dir)
-    plot_safety_states(df, output_dir)
-    plot_win_time_distribution(wins_csv, output_dir)
-    
-    # Summary
-    create_summary_table(df, output_dir)
+    # Process analysis files if prefix provided
+    if args.analysis_prefix:
+        print(f"\nGenerating analysis visualizations from {args.analysis_prefix}_*.csv...")
+        
+        heatmap_file = f"{args.analysis_prefix}_heatmap.csv"
+        critical_file = f"{args.analysis_prefix}_critical.csv"
+        
+        plot_safety_heatmap(heatmap_file, output_dir)
+        plot_critical_positions(critical_file, output_dir)
     
     print("\nDone!")
 
-if __name__ == "__main__":
+
+if __name__ == '__main__':
     main()
+

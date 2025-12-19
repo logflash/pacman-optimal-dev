@@ -431,7 +431,7 @@ string pacman_strategy_name(PacmanStrategy s) {
         case PacmanStrategy::OPTIMAL: return "Optimal";
         case PacmanStrategy::ASTAR_SAFETY: return "A*_Safety_Heuristic";
         case PacmanStrategy::ASTAR_FRS: return "A*_FRS_Filter";
-        case PacmanStrategy::ASTAR_FILTER: return "A*_Optimal_Safety_Filter";
+        case PacmanStrategy::ASTAR_FILTER: return "A*_Safety_Filter";
     }
     return "Unknown";
 }
