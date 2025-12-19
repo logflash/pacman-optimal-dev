@@ -67,6 +67,10 @@ inline void get_neighbors(int idx, int* neighbors, int &count) {
     }
 }
 
+inline int manhattan_dist(int a, int b) {
+    return abs(row(a) - row(b)) + abs(col(a) - col(b));
+}
+
 // ============================================================================
 // Compact Power State Encoding
 // ============================================================================
@@ -286,9 +290,9 @@ void print_game_state(int p, int g1, int g2, int pellet_mask, int power_timer, i
             if (pacman_caught && idx == p) {
                 cout << ANSI_MAGENTA << "X " << ANSI_RESET;  // Caught
             } else if (idx == p) {
-                if (is_powered(power_timer)) 
+                if (is_powered(power_timer))
                     cout << ANSI_CYAN << "@ " << ANSI_RESET;  // Powered Pacman
-                else 
+                else
                     cout << ANSI_YELLOW << "P " << ANSI_RESET;
             } else if (g1_alive && idx == g1 && g2_alive && idx == g2) {
                 cout << ANSI_RED << "B " << ANSI_RESET;  // Both ghosts
@@ -506,7 +510,7 @@ MoveResult get_optimal_pacman_move(int p, int g1, int g2, int pellet_mask, int p
                             dominated = true;
                         }
                     }
-                    
+
                     if (dominated) {
                         worst_safety = s;
                         worst_ttr_g = tg;
@@ -552,6 +556,317 @@ MoveResult get_optimal_pacman_move(int p, int g1, int g2, int pellet_mask, int p
     result.new_g2 = best_g2_move;
     result.new_pellet_mask = best_pellet_mask;
     result.new_power_timer = best_power_timer;
+
+    return result;
+}
+
+// ============================================================================
+// A* Algorithm
+// ============================================================================
+
+MoveResult move_buffer_a_star[128];
+int a_star_len = 0;
+
+MoveResult get_pacman_a_star_move(int p, int g1, int g2, int goal, int max_moves, int pellet_mask, int power_timer) {
+    MoveResult result;
+    result.pos1 = p;
+    result.pos2 = p;
+    result.new_g1 = g1;
+    result.new_g2 = g2;
+    result.new_pellet_mask = pellet_mask;
+    result.new_power_timer = power_timer;
+
+    // Clear buffer
+    a_star_len = 0;
+
+    // If already at goal, return immediately
+    if (p == goal) {
+        return result;
+    }
+
+    // A* data structures
+    const int MAX_NODES = MAZE_CELLS;
+    int g_score[MAX_NODES];
+    int f_score[MAX_NODES];
+    int parent[MAX_NODES];
+    bool closed[MAX_NODES];
+
+    // Initialize
+    for (int i = 0; i < MAX_NODES; i++) {
+        g_score[i] = 999999;
+        f_score[i] = 999999;
+        parent[i] = -1;
+        closed[i] = false;
+    }
+
+    // Simple priority queue (open set)
+    int open_set[MAX_NODES];
+    int open_size = 0;
+
+    // Start node
+    g_score[p] = 0;
+    f_score[p] = manhattan_dist(p, goal);
+    open_set[open_size++] = p;
+
+    // Track best node found so far (closest to goal)
+    int best_node = p;
+    int best_f = f_score[p];
+
+    while (open_size > 0) {
+        // Find node with lowest f_score in open set
+        int min_idx = 0;
+        for (int i = 1; i < open_size; i++) {
+            if (f_score[open_set[i]] < f_score[open_set[min_idx]]) {
+                min_idx = i;
+            }
+        }
+
+        int current = open_set[min_idx];
+
+        // Remove current from open set
+        open_set[min_idx] = open_set[--open_size];
+
+        // Update best node if this one is closer to goal
+        if (f_score[current] < best_f) {
+            best_node = current;
+            best_f = f_score[current];
+        }
+
+        // Goal reached
+        if (current == goal) {
+            best_node = goal;
+            break;
+        }
+
+        // Max moves reached - stop planning
+        if (g_score[current] >= max_moves) {
+            break;
+        }
+
+        // Mark current as closed
+        closed[current] = true;
+
+        // Explore neighbors
+        int neighbors[4];
+        int neighbor_count;
+        get_neighbors(current, neighbors, neighbor_count);
+
+        for (int i = 0; i < neighbor_count; i++) {
+            int neighbor = neighbors[i];
+
+            if (closed[neighbor]) continue;
+
+            int tentative_g = g_score[current] + 1;
+
+            if (tentative_g < g_score[neighbor]) {
+                parent[neighbor] = current;
+                g_score[neighbor] = tentative_g;
+                f_score[neighbor] = tentative_g + manhattan_dist(neighbor, goal);
+
+                // Add to open set if not already present
+                bool in_open = false;
+                for (int j = 0; j < open_size; j++) {
+                    if (open_set[j] == neighbor) {
+                        in_open = true;
+                        break;
+                    }
+                }
+
+                if (!in_open && open_size < MAX_NODES) {
+                    open_set[open_size++] = neighbor;
+                }
+            }
+        }
+    }
+
+    // Reconstruct path to best node found
+    int path[128];
+    int path_len = 0;
+    int node = best_node;
+
+    while (node != p && path_len < 128) {
+        path[path_len++] = node;
+        node = parent[node];
+    }
+
+    // Reverse path and build move buffer
+    for (int i = path_len - 1; i >= 0 && a_star_len < 128; i--) {
+        MoveResult move;
+        move.pos1 = path[i];
+        move.pos2 = path[i];
+        move.new_g1 = g1;
+        move.new_g2 = g2;
+        move.new_pellet_mask = pellet_mask;
+        move.new_power_timer = power_timer;
+        move_buffer_a_star[a_star_len++] = move;
+    }
+
+    // First move for return
+    if (path_len > 0) {
+        result.pos1 = path[path_len - 1];
+        result.pos2 = path[path_len - 1];
+    }
+
+    return result;
+}
+
+MoveResult get_pacman_evasive_a_star_move(int p, int g1, int g2, int goal, int max_moves, int fear_factor, int pellet_mask, int power_timer) {
+    MoveResult result;
+    result.pos1 = p;
+    result.pos2 = p;
+    result.new_g1 = g1;
+    result.new_g2 = g2;
+    result.new_pellet_mask = pellet_mask;
+    result.new_power_timer = power_timer;
+
+    // Clear buffer
+    a_star_len = 0;
+
+    // If already at goal, return immediately
+    if (p == goal) {
+        return result;
+    }
+
+    // A* data structures
+    const int MAX_NODES = MAZE_CELLS;
+    int g_score[MAX_NODES];
+    int f_score[MAX_NODES];
+    int parent[MAX_NODES];
+    bool closed[MAX_NODES];
+
+    // Initialize
+    for (int i = 0; i < MAX_NODES; i++) {
+        g_score[i] = 999999;
+        f_score[i] = 999999;
+        parent[i] = -1;
+        closed[i] = false;
+    }
+
+    // Simple priority queue (open set)
+    int open_set[MAX_NODES];
+    int open_size = 0;
+
+    // Helper function to calculate ghost fear penalty
+    auto calculate_fear_penalty = [&](int pos) -> int {
+        int penalty = 0;
+        bool g1_alive = (g1 != DEAD);
+        bool g2_alive = (g2 != DEAD);
+
+        if (g1_alive) {
+            int dist1 = manhattan_dist(pos, g1);
+            penalty += (fear_factor >> dist1);
+        }
+        if (g2_alive) {
+            int dist2 = manhattan_dist(pos, g2);
+            penalty += (fear_factor >> dist2);
+        }
+        return penalty;
+    };
+
+    // Start node
+    g_score[p] = 0;
+    f_score[p] = manhattan_dist(p, goal) + calculate_fear_penalty(p);
+    open_set[open_size++] = p;
+
+    // Track best node found so far (closest to goal)
+    int best_node = p;
+    int best_f = f_score[p];
+
+    while (open_size > 0) {
+        // Find node with lowest f_score in open set
+        int min_idx = 0;
+        for (int i = 1; i < open_size; i++) {
+            if (f_score[open_set[i]] < f_score[open_set[min_idx]]) {
+                min_idx = i;
+            }
+        }
+
+        int current = open_set[min_idx];
+
+        // Remove current from open set
+        open_set[min_idx] = open_set[--open_size];
+
+        // Update best node if this one is closer to goal
+        if (f_score[current] < best_f) {
+            best_node = current;
+            best_f = f_score[current];
+        }
+
+        // Goal reached
+        if (current == goal) {
+            best_node = goal;
+            break;
+        }
+
+        // Max moves reached - stop planning
+        if (g_score[current] >= max_moves) {
+            break;
+        }
+
+        // Mark current as closed
+        closed[current] = true;
+
+        // Explore neighbors
+        int neighbors[4];
+        int neighbor_count;
+        get_neighbors(current, neighbors, neighbor_count);
+
+        for (int i = 0; i < neighbor_count; i++) {
+            int neighbor = neighbors[i];
+
+            if (closed[neighbor]) continue;
+
+            int tentative_g = g_score[current] + 1;
+
+            if (tentative_g < g_score[neighbor]) {
+                parent[neighbor] = current;
+                g_score[neighbor] = tentative_g;
+                // Add fear penalty to heuristic
+                f_score[neighbor] = tentative_g + manhattan_dist(neighbor, goal) + calculate_fear_penalty(neighbor);
+
+                // Add to open set if not already present
+                bool in_open = false;
+                for (int j = 0; j < open_size; j++) {
+                    if (open_set[j] == neighbor) {
+                        in_open = true;
+                        break;
+                    }
+                }
+
+                if (!in_open && open_size < MAX_NODES) {
+                    open_set[open_size++] = neighbor;
+                }
+            }
+        }
+    }
+
+    // Reconstruct path to best node found
+    int path[128];
+    int path_len = 0;
+    int node = best_node;
+
+    while (node != p && path_len < 128) {
+        path[path_len++] = node;
+        node = parent[node];
+    }
+
+    // Reverse path and build move buffer
+    for (int i = path_len - 1; i >= 0 && a_star_len < 128; i--) {
+        MoveResult move;
+        move.pos1 = path[i];
+        move.pos2 = path[i];
+        move.new_g1 = g1;
+        move.new_g2 = g2;
+        move.new_pellet_mask = pellet_mask;
+        move.new_power_timer = power_timer;
+        move_buffer_a_star[a_star_len++] = move;
+    }
+
+    // First move for return
+    if (path_len > 0) {
+        result.pos1 = path[path_len - 1];
+        result.pos2 = path[path_len - 1];
+    }
 
     return result;
 }
@@ -615,7 +930,7 @@ void simulate_optimal_play(int start_p, int start_g1, int start_g2, int max_step
         // Check pellet eating
         int pellet_eaten = get_pellet_at(move.pos1, pellet_mask);
         if (pellet_eaten >= 0) {
-            cout << ANSI_WHITE << ">>> " << ANSI_YELLOW << "Pacman" << ANSI_WHITE 
+            cout << ANSI_WHITE << ">>> " << ANSI_YELLOW << "Pacman" << ANSI_WHITE
                  << " eats pellet " << pellet_eaten << " at position "
                  << pellet_positions[pellet_eaten] << "! <<<" << ANSI_RESET << endl;
         }
@@ -641,18 +956,18 @@ void simulate_optimal_play(int start_p, int start_g1, int start_g2, int max_step
         } else {
             cout << ANSI_RED << "Ghost2" << ANSI_RESET << ": DEAD" << endl;
         }
-        
+
         cout << "" << endl;
 
         // Check ghost eating on first move
         if (will_be_powered) {
             if (g1_alive && move.pos1 == g1) {
-                cout << ANSI_CYAN << ">>> " << ANSI_YELLOW << "Pacman" << ANSI_CYAN 
+                cout << ANSI_CYAN << ">>> " << ANSI_YELLOW << "Pacman" << ANSI_CYAN
                      << " eats " << ANSI_RED << "Ghost 1" << ANSI_CYAN << "! <<<" << ANSI_RESET << endl;
                 move.new_g1 = DEAD;
             }
             if (g2_alive && move.pos1 == g2) {
-                cout << ANSI_CYAN << ">>> " << ANSI_YELLOW << "Pacman" << ANSI_CYAN 
+                cout << ANSI_CYAN << ">>> " << ANSI_YELLOW << "Pacman" << ANSI_CYAN
                      << " eats " << ANSI_RED << "Ghost 2" << ANSI_CYAN << "! <<<" << ANSI_RESET << endl;
                 move.new_g2 = DEAD;
             }
@@ -666,22 +981,22 @@ void simulate_optimal_play(int start_p, int start_g1, int start_g2, int max_step
             // Direct collision: Pacman and ghost end up at same position
             bool catch1 = g1_alive && (move.pos2 == move.new_g1);
             bool catch2 = g2_alive && (move.pos2 == move.new_g2);
-            
+
             // Clipping: Pacman and ghost swap positions on second move
             // Pacman: pos1 -> pos2, Ghost: g -> new_g
             // Clip if pos1 == new_g AND g == pos2
             bool clip1 = g1_alive && (move.pos1 == move.new_g1 && g1 == move.pos2);
             bool clip2 = g2_alive && (move.pos1 == move.new_g2 && g2 == move.pos2);
-            
+
             if (catch1 || clip1) {
-                cout << ANSI_CYAN << ">>> " << ANSI_YELLOW << "Pacman" << ANSI_CYAN 
+                cout << ANSI_CYAN << ">>> " << ANSI_YELLOW << "Pacman" << ANSI_CYAN
                      << " eats " << ANSI_RED << "Ghost 1" << ANSI_CYAN << " on second move!";
                 if (clip1 && !catch1) cout << " (clipped)";
                 cout << " <<<" << ANSI_RESET << endl;
                 move.new_g1 = DEAD;
             }
             if (catch2 || clip2) {
-                cout << ANSI_CYAN << ">>> " << ANSI_YELLOW << "Pacman" << ANSI_CYAN 
+                cout << ANSI_CYAN << ">>> " << ANSI_YELLOW << "Pacman" << ANSI_CYAN
                      << " eats " << ANSI_RED << "Ghost 2" << ANSI_CYAN << " on second move!";
                 if (clip2 && !catch2) cout << " (clipped)";
                 cout << " <<<" << ANSI_RESET << endl;
@@ -750,6 +1065,117 @@ void simulate_optimal_play(int start_p, int start_g1, int start_g2, int max_step
     }
 }
 
+void test_a_star() {
+    cout << "\n========================================" << endl;
+    cout << "A* PATHFINDING TESTS" << endl;
+    cout << "========================================\n" << endl;
+
+    // Test parameters
+    int test_start = 64;   // Pacman starting position
+    int test_goal = 130;   // Goal position
+    int test_g1 = 22;      // Ghost 1 position
+    int test_g2 = 100;     // Ghost 2 position
+    int pellet_mask = 0;   // No pellets for testing
+    int power_timer = 0;   // Not powered
+
+    cout << "Test Setup:" << endl;
+    cout << "  Start: " << test_start << " [" << row(test_start) << "," << col(test_start) << "]" << endl;
+    cout << "  Goal: " << test_goal << " [" << row(test_goal) << "," << col(test_goal) << "]" << endl;
+    cout << "  Ghost1: " << test_g1 << " [" << row(test_g1) << "," << col(test_g1) << "]" << endl;
+    cout << "  Ghost2: " << test_g2 << " [" << row(test_g2) << "," << col(test_g2) << "]" << endl;
+    cout << "  Manhattan distance: " << manhattan_dist(test_start, test_goal) << endl;
+    cout << endl;
+
+    // Test 1: Basic A* (no ghost avoidance)
+    cout << "Test 1: Basic A* (max_moves=50)" << endl;
+    cout << "---------------------------------------" << endl;
+    MoveResult result1 = get_pacman_a_star_move(test_start, test_g1, test_g2, test_goal, 50, pellet_mask, power_timer);
+    cout << "  First move: " << test_start << " -> " << result1.pos1 << endl;
+    cout << "  Path length: " << a_star_len << " moves" << endl;
+    cout << "  Path: ";
+    for (int i = 0; i < a_star_len && i < 10; i++) {
+        cout << move_buffer_a_star[i].pos1;
+        if (i < a_star_len - 1 && i < 9) cout << " -> ";
+    }
+    if (a_star_len > 10) cout << " ... (+" << (a_star_len - 10) << " more)";
+    cout << endl;
+    cout << "  Reached goal: " << (a_star_len > 0 && move_buffer_a_star[a_star_len-1].pos1 == test_goal ? "YES" : "NO") << endl;
+    cout << endl;
+
+    // Test 2: Basic A* with limited moves
+    cout << "Test 2: Basic A* (max_moves=5)" << endl;
+    cout << "---------------------------------------" << endl;
+    MoveResult result2 = get_pacman_a_star_move(test_start, test_g1, test_g2, test_goal, 5, pellet_mask, power_timer);
+    cout << "  First move: " << test_start << " -> " << result2.pos1 << endl;
+    cout << "  Path length: " << a_star_len << " moves" << endl;
+    cout << "  Path: ";
+    for (int i = 0; i < a_star_len; i++) {
+        cout << move_buffer_a_star[i].pos1;
+        if (i < a_star_len - 1) cout << " -> ";
+    }
+    cout << endl;
+    cout << "  Final position: " << (a_star_len > 0 ? move_buffer_a_star[a_star_len-1].pos1 : test_start);
+    cout << " (distance to goal: " << (a_star_len > 0 ? manhattan_dist(move_buffer_a_star[a_star_len-1].pos1, test_goal) : manhattan_dist(test_start, test_goal)) << ")" << endl;
+    cout << endl;
+
+    // Test 3: Evasive A* with low fear factor
+    cout << "Test 3: Evasive A* (max_moves=50, fear_factor=64)" << endl;
+    cout << "---------------------------------------" << endl;
+    MoveResult result3 = get_pacman_evasive_a_star_move(test_start, test_g1, test_g2, test_goal, 50, 64, pellet_mask, power_timer);
+    cout << "  First move: " << test_start << " -> " << result3.pos1 << endl;
+    cout << "  Path length: " << a_star_len << " moves" << endl;
+    cout << "  Path: ";
+    for (int i = 0; i < a_star_len && i < 10; i++) {
+        cout << move_buffer_a_star[i].pos1;
+        if (i < a_star_len - 1 && i < 9) cout << " -> ";
+    }
+    if (a_star_len > 10) cout << " ... (+" << (a_star_len - 10) << " more)";
+    cout << endl;
+    cout << "  Reached goal: " << (a_star_len > 0 && move_buffer_a_star[a_star_len-1].pos1 == test_goal ? "YES" : "NO") << endl;
+    cout << endl;
+
+    // Test 4: Evasive A* with high fear factor
+    cout << "Test 4: Evasive A* (max_moves=50, fear_factor=1024)" << endl;
+    cout << "---------------------------------------" << endl;
+    MoveResult result4 = get_pacman_evasive_a_star_move(test_start, test_g1, test_g2, test_goal, 50, 1024, pellet_mask, power_timer);
+    cout << "  First move: " << test_start << " -> " << result4.pos1 << endl;
+    cout << "  Path length: " << a_star_len << " moves" << endl;
+    cout << "  Path: ";
+    for (int i = 0; i < a_star_len && i < 10; i++) {
+        cout << move_buffer_a_star[i].pos1;
+        if (i < a_star_len - 1 && i < 9) cout << " -> ";
+    }
+    if (a_star_len > 10) cout << " ... (+" << (a_star_len - 10) << " more)";
+    cout << endl;
+    cout << "  Reached goal: " << (a_star_len > 0 && move_buffer_a_star[a_star_len-1].pos1 == test_goal ? "YES" : "NO") << endl;
+
+    // Compare ghost distances along path
+    if (a_star_len > 0) {
+        int min_ghost_dist = 999;
+        for (int i = 0; i < a_star_len; i++) {
+            int pos = move_buffer_a_star[i].pos1;
+            int d1 = (test_g1 != DEAD) ? manhattan_dist(pos, test_g1) : 999;
+            int d2 = (test_g2 != DEAD) ? manhattan_dist(pos, test_g2) : 999;
+            int min_d = (d1 < d2) ? d1 : d2;
+            if (min_d < min_ghost_dist) min_ghost_dist = min_d;
+        }
+        cout << "  Minimum ghost distance: " << min_ghost_dist << endl;
+    }
+    cout << endl;
+
+    // Test 5: Already at goal
+    cout << "Test 5: Already at goal" << endl;
+    cout << "---------------------------------------" << endl;
+    MoveResult result5 = get_pacman_a_star_move(test_goal, test_g1, test_g2, test_goal, 50, pellet_mask, power_timer);
+    cout << "  Path length: " << a_star_len << endl;
+    cout << "  First move: " << result5.pos1 << " (should be " << test_goal << ")" << endl;
+    cout << endl;
+
+    cout << "========================================" << endl;
+    cout << "A* TESTS COMPLETE" << endl;
+    cout << "========================================\n" << endl;
+}
+
 // ============================================================================
 // Main
 // ============================================================================
@@ -765,6 +1191,7 @@ void print_usage(const char* program) {
     cout << "  -1, --ghost1 POS    Initial Ghost1 position (default: 22)" << endl;
     cout << "  -2, --ghost2 POS    Initial Ghost2 position (default: 130)" << endl;
     cout << "  -m, --max-steps N   Maximum simulation steps (default: 100)" << endl;
+    cout << "  --test-astar        Run A* pathfinding tests and exit" << endl;
     cout << "  -h, --help          Show this help message" << endl;
 }
 
@@ -774,6 +1201,7 @@ int main(int argc, char* argv[]) {
     int start_g1 = 22;
     int start_g2 = 130;
     int max_steps = 100;
+    bool run_astar_test = false;
 
     for (int i = 1; i < argc; i++) {
         string arg = argv[i];
@@ -787,6 +1215,8 @@ int main(int argc, char* argv[]) {
             start_g2 = stoi(argv[++i]);
         } else if ((arg == "-m" || arg == "--max-steps") && i + 1 < argc) {
             max_steps = stoi(argv[++i]);
+        } else if (arg == "--test-astar") {
+            run_astar_test = true;
         } else if (arg == "-h" || arg == "--help") {
             print_usage(argv[0]);
             return 0;
@@ -810,6 +1240,13 @@ int main(int argc, char* argv[]) {
     }
 
     cout << "Maze: " << MAZE_ROWS << "x" << MAZE_COLS << endl;
+
+    // Run A* test if requested
+    if (run_astar_test) {
+        test_a_star();
+        free_tables();
+        return 0;
+    }
 
     // Validate positions
     if (!is_valid_pos(start_p)) {

@@ -81,6 +81,14 @@ inline int manhattan_dist(int a, int b) {
 void get_optimal_ghost_moves_internal(int p, int np1, int np2, int g1, int g2, int power_state,
                                       int& best_g1, int& best_g2);
 
+// Result structure for safety filter
+struct SafetyFilterResult {
+    int override;      // 0 = accept, 1 = reject
+    int move;          // Final Pacman move (position)
+    int ghost1_move;   // Optimal Ghost 1 move (position)
+    int ghost2_move;   // Optimal Ghost 2 move (position)
+};
+
 // Result structure for Pacman's optimal move (supports double-move when powered)
 struct PacmanMoveResult {
     int pos1;       // First position (always used)
@@ -532,6 +540,152 @@ void get_optimal_ghost_moves_internal(int p, int np1, int np2, int g1, int g2, i
             }
         }
     }
+}
+
+// Safety filter: checks if suggested move leads to safety=0, overrides with optimal move if needed
+// suggested_move1: first move position (always used)
+// suggested_move2: second move position (only used when powered, ignored otherwise)
+SafetyFilterResult safety_filter(int p, int g1, int g2, int power_state, int suggested_move1, int suggested_move2) {
+    SafetyFilterResult result;
+    result.override = 0;  // Default: accept suggested move
+    result.move = suggested_move1;
+    result.ghost1_move = g1;
+    result.ghost2_move = g2;
+
+    bool g1_alive = (g1 != DEAD);
+    bool g2_alive = (g2 != DEAD);
+
+    // Compute power state after Pacman's first move to suggested position
+    int pw_after_move1 = power_state;
+    if (power_state == PELLET_EXISTS && suggested_move1 == pellet_pos) {
+        pw_after_move1 = power_duration;  // Pacman eats pellet
+    }
+    bool will_be_powered = is_powered(pw_after_move1);
+
+    // For powered mode: use suggested_move2 if provided, otherwise use suggested_move1
+    // For non-powered mode: only use suggested_move1
+    int pac_neighbors2[1], pac_n2;
+    if (will_be_powered) {
+        pac_n2 = 1;
+        pac_neighbors2[0] = suggested_move2;  // Use the second suggested move
+    } else {
+        pac_n2 = 1;
+        pac_neighbors2[0] = suggested_move1;  // Only one move
+    }
+
+    // Check if suggested move leads to safety=0 in any scenario
+    bool will_be_unsafe = false;
+
+    for (int pi2 = 0; pi2 < pac_n2; pi2++) {
+        int np2 = pac_neighbors2[pi2];
+
+        // Get ghost moves (only for alive ghosts)
+        int g1_neighbors[4], g1_n = 0;
+        int g2_neighbors[4], g2_n = 0;
+
+        if (g1_alive) {
+            get_neighbors(g1, g1_neighbors, g1_n);
+        }
+        if (g2_alive) {
+            get_neighbors(g2, g2_neighbors, g2_n);
+        }
+
+        int g1_moves = g1_alive ? g1_n : 1;
+        int g2_moves = g2_alive ? g2_n : 1;
+
+        // Check if ghosts are caught on Pacman's first move
+        bool g1_caught_move1 = will_be_powered && g1_alive && (suggested_move1 == g1);
+        bool g2_caught_move1 = will_be_powered && g2_alive && (suggested_move1 == g2);
+
+        int g1_iter_count = g1_caught_move1 ? 1 : g1_moves;
+        int g2_iter_count = g2_caught_move1 ? 1 : g2_moves;
+
+        // Check all ghost move combinations
+        for (int gi1 = 0; gi1 < g1_iter_count; gi1++) {
+            for (int gi2 = 0; gi2 < g2_iter_count; gi2++) {
+                int ng1 = g1_caught_move1 ? DEAD : (g1_alive ? g1_neighbors[gi1] : DEAD);
+                int ng2 = g2_caught_move1 ? DEAD : (g2_alive ? g2_neighbors[gi2] : DEAD);
+
+                int final_g1 = ng1;
+                int final_g2 = ng2;
+                int final_pw = pw_after_move1;
+                bool pacman_dies = false;
+
+                if (will_be_powered) {
+                    // Check ghost catches on move 2
+                    bool g1_alive_after_move1 = g1_alive && !g1_caught_move1;
+                    bool g2_alive_after_move1 = g2_alive && !g2_caught_move1;
+
+                    bool catch1_move2 = g1_alive_after_move1 && (np2 == ng1);
+                    bool catch2_move2 = g2_alive_after_move1 && (np2 == ng2);
+
+                    bool clip1 = g1_alive_after_move1 && (suggested_move1 == ng1 && g1 == np2);
+                    bool clip2 = g2_alive_after_move1 && (suggested_move1 == ng2 && g2 == np2);
+
+                    if (g1_caught_move1 || catch1_move2 || clip1) final_g1 = DEAD;
+                    if (g2_caught_move1 || catch2_move2 || clip2) final_g2 = DEAD;
+                } else {
+                    // Not powered: check for collision
+                    bool clip1 = g1_alive && (p == ng1 && g1 == suggested_move1);
+                    bool clip2 = g2_alive && (p == ng2 && g2 == suggested_move1);
+
+                    bool collide1 = g1_alive && (suggested_move1 == ng1 || clip1);
+                    bool collide2 = g2_alive && (suggested_move1 == ng2 || clip2);
+
+                    if (collide1 || collide2) {
+                        pacman_dies = true;
+                    }
+                }
+
+                // Decrement power timer
+                if (is_powered(final_pw)) {
+                    final_pw = decrement_power(final_pw);
+                }
+
+                // Check safety value in next state
+                uint8_t next_safety;
+                if (pacman_dies) {
+                    next_safety = 0;
+                } else if (final_g1 == DEAD && final_g2 == DEAD) {
+                    next_safety = 1;
+                } else {
+                    next_safety = safety_value[np2][final_g1][final_g2][final_pw];
+                }
+
+                if (next_safety == 0) {
+                    will_be_unsafe = true;
+                    break;
+                }
+            }
+            if (will_be_unsafe) break;
+        }
+        if (will_be_unsafe) break;
+    }
+
+    // If suggested move leads to safety=0, override with optimal move
+    if (will_be_unsafe) {
+        result.override = 1;
+
+        // Get optimal move
+        PacmanMoveResult optimal = get_optimal_pacman_move(p, g1, g2, power_state);
+        result.move = optimal.pos2;  // Use final position after double-move if powered
+        result.ghost1_move = optimal.new_g1;
+        result.ghost2_move = optimal.new_g2;
+    } else {
+        // Suggested move is safe, compute optimal ghost responses
+        int best_g1, best_g2;
+
+        // Use the appropriate second move depending on power state
+        int final_move2 = will_be_powered ? suggested_move2 : suggested_move1;
+
+        get_optimal_ghost_moves_internal(p, suggested_move1, final_move2, g1, g2, pw_after_move1, best_g1, best_g2);
+
+        result.ghost1_move = best_g1;
+        result.ghost2_move = best_g2;
+        result.move = final_move2;  // Return the final position (second move if powered)
+    }
+
+    return result;
 }
 
 void simulate_optimal_play(int start_p, int start_g1, int start_g2, int max_steps) {
