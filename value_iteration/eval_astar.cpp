@@ -725,11 +725,254 @@ int astar_frs_tracked(int start, int goal, int g1, int g2, int pellet_mask, int 
     return result;
 }
 
+// Check if a first move (np1) is safe against all ghost responses
+// This must match the value iteration logic exactly
+bool is_move_safe(int p, int np1, int g1, int g2, int pellet_mask, int power_timer) {
+    bool g1_alive = (g1 != DEAD);
+    bool g2_alive = (g2 != DEAD);
+    
+    // Pre-compute ghost neighbors
+    int g1_neighbors[4], g1_n = 0;
+    int g2_neighbors[4], g2_n = 0;
+    
+    if (g1_alive) get_neighbors(g1, g1_neighbors, g1_n);
+    if (g2_alive) get_neighbors(g2, g2_neighbors, g2_n);
+    
+    int g1_moves = g1_alive ? g1_n : 1;
+    int g2_moves = g2_alive ? g2_n : 1;
+    
+    // Compute power state after first move
+    int new_pellet_mask = pellet_mask;
+    int new_power_timer = power_timer;
+    
+    int pellet_eaten = get_pellet_at(np1, pellet_mask);
+    if (pellet_eaten >= 0) {
+        new_pellet_mask = remove_pellet(pellet_mask, pellet_eaten);
+        new_power_timer = power_duration;
+    }
+    
+    // KEY: will_be_powered if already powered OR just ate a pellet
+    bool will_be_powered = is_powered(new_power_timer);
+    
+    // Get second move options (for powered mode, we need to check all np2)
+    int neighbors2[5], count2;
+    if (will_be_powered) {
+        get_neighbors(np1, neighbors2, count2);
+        neighbors2[count2++] = np1;  // Can stay in place on move 2
+    } else {
+        count2 = 1;
+        neighbors2[0] = np1;  // np2 == np1 for unpowered
+    }
+    
+    // For a move to be safe, there must exist at least one np2 that is safe
+    // against ALL ghost responses (this matches value iteration's max over np2)
+    for (int i2 = 0; i2 < count2; i2++) {
+        int np2 = neighbors2[i2];
+        
+        // Check pellet on second move
+        int final_pellet_mask = new_pellet_mask;
+        int final_power_timer = new_power_timer;
+        
+        if (will_be_powered && np2 != np1) {
+            int pellet_eaten2 = get_pellet_at(np2, new_pellet_mask);
+            if (pellet_eaten2 >= 0) {
+                final_pellet_mask = remove_pellet(new_pellet_mask, pellet_eaten2);
+                final_power_timer = power_duration;
+            }
+        }
+        
+        bool np2_safe_against_all_ghosts = true;
+        
+        // For powered mode: check if ghosts are caught on first move
+        bool g1_caught_move1 = will_be_powered && g1_alive && (np1 == g1);
+        bool g2_caught_move1 = will_be_powered && g2_alive && (np1 == g2);
+        
+        int g1_iter = g1_caught_move1 ? 1 : g1_moves;
+        int g2_iter = g2_caught_move1 ? 1 : g2_moves;
+        
+        for (int gi1 = 0; gi1 < g1_iter && np2_safe_against_all_ghosts; gi1++) {
+            for (int gi2 = 0; gi2 < g2_iter && np2_safe_against_all_ghosts; gi2++) {
+                int ng1 = g1_caught_move1 ? DEAD : (g1_alive ? g1_neighbors[gi1] : DEAD);
+                int ng2 = g2_caught_move1 ? DEAD : (g2_alive ? g2_neighbors[gi2] : DEAD);
+                
+                int result_g1 = ng1;
+                int result_g2 = ng2;
+                bool pacman_dies = false;
+                
+                if (will_be_powered) {
+                    // Powered mode: check catches/clips on second move
+                    bool g1_alive_after_move1 = g1_alive && !g1_caught_move1;
+                    bool g2_alive_after_move1 = g2_alive && !g2_caught_move1;
+                    
+                    bool catch1_m2 = g1_alive_after_move1 && (np2 == ng1);
+                    bool catch2_m2 = g2_alive_after_move1 && (np2 == ng2);
+                    
+                    bool clip1 = g1_alive_after_move1 && (np1 == ng1 && g1 == np2);
+                    bool clip2 = g2_alive_after_move1 && (np1 == ng2 && g2 == np2);
+                    
+                    if (g1_caught_move1 || catch1_m2 || clip1) result_g1 = DEAD;
+                    if (g2_caught_move1 || catch2_m2 || clip2) result_g2 = DEAD;
+                } else {
+                    // Unpowered mode: check collision/clip
+                    bool clip1 = g1_alive && (p == ng1 && g1 == np1);
+                    bool clip2 = g2_alive && (p == ng2 && g2 == np1);
+                    bool collide1 = g1_alive && (np1 == ng1 || clip1);
+                    bool collide2 = g2_alive && (np1 == ng2 || clip2);
+                    
+                    if (collide1 || collide2) pacman_dies = true;
+                }
+                
+                if (pacman_dies) {
+                    np2_safe_against_all_ghosts = false;
+                } else if (result_g1 == DEAD && result_g2 == DEAD) {
+                    // Both ghosts dead = always safe, continue checking
+                } else {
+                    // Decrement power timer for lookup
+                    int result_power_timer = final_power_timer;
+                    if (is_powered(result_power_timer)) {
+                        result_power_timer--;
+                    }
+                    
+                    int pw = encode_power_state(final_pellet_mask, result_power_timer);
+                    size_t idx = value_index(np2, result_g1, result_g2, pw);
+                    if (safety_value[idx] == 0) {
+                        np2_safe_against_all_ghosts = false;
+                    }
+                }
+            }
+        }
+        
+        // If this np2 is safe against all ghost responses, the move np1 is safe
+        if (np2_safe_against_all_ghosts) {
+            return true;
+        }
+    }
+    
+    // No np2 was safe against all ghost responses
+    return false;
+}
+
+// Find the best safe np2 for a given np1 (for powered mode)
+// Returns the np2 that is safe and closest to the goal, or -1 if none
+int find_safe_np2(int p, int np1, int g1, int g2, int pellet_mask, int power_timer, int goal) {
+    bool g1_alive = (g1 != DEAD);
+    bool g2_alive = (g2 != DEAD);
+    
+    // Pre-compute ghost neighbors
+    int g1_neighbors[4], g1_n = 0;
+    int g2_neighbors[4], g2_n = 0;
+    
+    if (g1_alive) get_neighbors(g1, g1_neighbors, g1_n);
+    if (g2_alive) get_neighbors(g2, g2_neighbors, g2_n);
+    
+    int g1_moves = g1_alive ? g1_n : 1;
+    int g2_moves = g2_alive ? g2_n : 1;
+    
+    // Compute power state after first move
+    int new_pellet_mask = pellet_mask;
+    int new_power_timer = power_timer;
+    
+    int pellet_eaten = get_pellet_at(np1, pellet_mask);
+    if (pellet_eaten >= 0) {
+        new_pellet_mask = remove_pellet(pellet_mask, pellet_eaten);
+        new_power_timer = power_duration;
+    }
+    
+    bool will_be_powered = is_powered(new_power_timer);
+    if (!will_be_powered) {
+        return np1;  // Not powered, np2 == np1
+    }
+    
+    // For powered mode: check if ghosts are caught on first move
+    bool g1_caught_move1 = g1_alive && (np1 == g1);
+    bool g2_caught_move1 = g2_alive && (np1 == g2);
+    
+    int g1_iter = g1_caught_move1 ? 1 : g1_moves;
+    int g2_iter = g2_caught_move1 ? 1 : g2_moves;
+    
+    // Get second move options
+    int neighbors2[5], count2;
+    get_neighbors(np1, neighbors2, count2);
+    neighbors2[count2++] = np1;  // Can stay in place
+    
+    int best_np2 = -1;
+    int best_dist = 999999;
+    
+    for (int i2 = 0; i2 < count2; i2++) {
+        int np2 = neighbors2[i2];
+        
+        // Check pellet on second move
+        int final_pellet_mask = new_pellet_mask;
+        int final_power_timer = new_power_timer;
+        
+        if (np2 != np1) {
+            int pellet_eaten2 = get_pellet_at(np2, new_pellet_mask);
+            if (pellet_eaten2 >= 0) {
+                final_pellet_mask = remove_pellet(new_pellet_mask, pellet_eaten2);
+                final_power_timer = power_duration;
+            }
+        }
+        
+        bool np2_safe_against_all_ghosts = true;
+        
+        for (int gi1 = 0; gi1 < g1_iter && np2_safe_against_all_ghosts; gi1++) {
+            for (int gi2 = 0; gi2 < g2_iter && np2_safe_against_all_ghosts; gi2++) {
+                int ng1 = g1_caught_move1 ? DEAD : (g1_alive ? g1_neighbors[gi1] : DEAD);
+                int ng2 = g2_caught_move1 ? DEAD : (g2_alive ? g2_neighbors[gi2] : DEAD);
+                
+                int result_g1 = ng1;
+                int result_g2 = ng2;
+                
+                // Powered mode: check catches/clips on second move
+                bool g1_alive_after_move1 = g1_alive && !g1_caught_move1;
+                bool g2_alive_after_move1 = g2_alive && !g2_caught_move1;
+                
+                bool catch1_m2 = g1_alive_after_move1 && (np2 == ng1);
+                bool catch2_m2 = g2_alive_after_move1 && (np2 == ng2);
+                
+                bool clip1 = g1_alive_after_move1 && (np1 == ng1 && g1 == np2);
+                bool clip2 = g2_alive_after_move1 && (np1 == ng2 && g2 == np2);
+                
+                if (g1_caught_move1 || catch1_m2 || clip1) result_g1 = DEAD;
+                if (g2_caught_move1 || catch2_m2 || clip2) result_g2 = DEAD;
+                
+                if (result_g1 == DEAD && result_g2 == DEAD) {
+                    // Both ghosts dead = always safe
+                } else {
+                    // Decrement power timer for lookup
+                    int result_power_timer = final_power_timer;
+                    if (is_powered(result_power_timer)) {
+                        result_power_timer--;
+                    }
+                    
+                    int pw = encode_power_state(final_pellet_mask, result_power_timer);
+                    size_t idx = value_index(np2, result_g1, result_g2, pw);
+                    if (safety_value[idx] == 0) {
+                        np2_safe_against_all_ghosts = false;
+                    }
+                }
+            }
+        }
+        
+        if (np2_safe_against_all_ghosts) {
+            int dist = manhattan_dist(np2, goal);
+            if (best_np2 < 0 || dist < best_dist) {
+                best_np2 = np2;
+                best_dist = dist;
+            }
+        }
+    }
+    
+    return best_np2;
+}
+
 // A* with safety filter - tracks interventions
+// Also returns safe_np2 for powered mode
 int astar_filter_tracked(int start, int goal, int g1, int g2, int pellet_mask, int power_timer,
-                         bool& intervention_occurred, bool& fallback_occurred) {
+                         bool& intervention_occurred, bool& fallback_occurred, int* out_safe_np2 = nullptr) {
     intervention_occurred = false;
     fallback_occurred = false;
+    if (out_safe_np2) *out_safe_np2 = start;
     
     if (start == goal) return start;
     
@@ -742,54 +985,23 @@ int astar_filter_tracked(int start, int goal, int g1, int g2, int pellet_mask, i
     
     if (count == 0) return start;
     
-    // Filter to safe moves and track which are blocked
-    vector<int> safe_moves;
-    int pw = encode_power_state(pellet_mask, power_timer);
+    // Filter to safe moves
+    vector<pair<int, int>> safe_moves;  // (np1, best_safe_np2)
     bool preferred_is_safe = false;
+    int preferred_np2 = start;
     
     for (int i = 0; i < count; i++) {
         int np = neighbors[i];
         
-        if (!is_powered(power_timer) && (np == g1 || np == g2)) {
-            if (np == preferred) current_stats.moves_blocked_by_safety++;
-            continue;
-        }
-        
-        bool move_safe = true;
-        
-        int g1_neighbors[4], g1_n = 0;
-        int g2_neighbors[4], g2_n = 0;
-        
-        if (g1 != DEAD) get_neighbors(g1, g1_neighbors, g1_n);
-        if (g2 != DEAD) get_neighbors(g2, g2_neighbors, g2_n);
-        
-        int g1_moves = (g1 != DEAD) ? g1_n : 1;
-        int g2_moves = (g2 != DEAD) ? g2_n : 1;
-        
-        for (int gi1 = 0; gi1 < g1_moves && move_safe; gi1++) {
-            for (int gi2 = 0; gi2 < g2_moves && move_safe; gi2++) {
-                int ng1 = (g1 != DEAD) ? g1_neighbors[gi1] : DEAD;
-                int ng2 = (g2 != DEAD) ? g2_neighbors[gi2] : DEAD;
-                
-                if (!is_powered(power_timer)) {
-                    bool clip1 = (g1 != DEAD) && (start == ng1 && g1 == np);
-                    bool clip2 = (g2 != DEAD) && (start == ng2 && g2 == np);
-                    if (np == ng1 || np == ng2 || clip1 || clip2) {
-                        move_safe = false;
-                        continue;
-                    }
-                }
-                
-                size_t idx = value_index(np, ng1, ng2, pw);
-                if (safety_value[idx] == 0) {
-                    move_safe = false;
+        if (is_move_safe(start, np, g1, g2, pellet_mask, power_timer)) {
+            int safe_np2 = find_safe_np2(start, np, g1, g2, pellet_mask, power_timer, goal);
+            if (safe_np2 >= 0) {
+                safe_moves.push_back({np, safe_np2});
+                if (np == preferred) {
+                    preferred_is_safe = true;
+                    preferred_np2 = safe_np2;
                 }
             }
-        }
-        
-        if (move_safe) {
-            safe_moves.push_back(np);
-            if (np == preferred) preferred_is_safe = true;
         } else {
             if (np == preferred) current_stats.moves_blocked_by_safety++;
         }
@@ -797,6 +1009,7 @@ int astar_filter_tracked(int start, int goal, int g1, int g2, int pellet_mask, i
     
     // If preferred move is safe, use it
     if (preferred_is_safe) {
+        if (out_safe_np2) *out_safe_np2 = preferred_np2;
         return preferred;
     }
     
@@ -810,17 +1023,20 @@ int astar_filter_tracked(int start, int goal, int g1, int g2, int pellet_mask, i
     }
     
     // Among safe moves, pick closest to goal
-    int best_move = safe_moves[0];
-    int best_dist = manhattan_dist(safe_moves[0], goal);
+    int best_move = safe_moves[0].first;
+    int best_np2 = safe_moves[0].second;
+    int best_dist = manhattan_dist(safe_moves[0].first, goal);
     
     for (size_t i = 1; i < safe_moves.size(); i++) {
-        int dist = manhattan_dist(safe_moves[i], goal);
+        int dist = manhattan_dist(safe_moves[i].first, goal);
         if (dist < best_dist) {
             best_dist = dist;
-            best_move = safe_moves[i];
+            best_move = safe_moves[i].first;
+            best_np2 = safe_moves[i].second;
         }
     }
     
+    if (out_safe_np2) *out_safe_np2 = best_np2;
     return best_move;
 }
 
@@ -1004,6 +1220,8 @@ struct SimulationResult {
     int initial_min_ghost_dist;
     int death_position;
     int win_time;
+    int death_tick;           // When death occurred
+    int pellets_eaten_at_death;  // How many pellets eaten when died (0-4)
 };
 
 SimulationResult run_simulation_detailed(PacmanStrategy pac_strategy, GhostStrategy ghost_strategy,
@@ -1015,6 +1233,8 @@ SimulationResult run_simulation_detailed(PacmanStrategy pac_strategy, GhostStrat
     result.stats.reset();
     result.death_position = -1;
     result.win_time = -1;
+    result.death_tick = -1;
+    result.pellets_eaten_at_death = -1;
     
     int d1 = (start_g1 != DEAD) ? manhattan_dist(start_p, start_g1) : 999;
     int d2 = (start_g2 != DEAD) ? manhattan_dist(start_p, start_g2) : 999;
@@ -1058,6 +1278,8 @@ SimulationResult run_simulation_detailed(PacmanStrategy pac_strategy, GhostStrat
         if (caught) {
             result.survival_time = tick;
             result.death_position = p;
+            result.death_tick = tick;
+            result.pellets_eaten_at_death = num_pellets - __builtin_popcount(pellet_mask);
             return result;
         }
         
@@ -1090,7 +1312,9 @@ SimulationResult run_simulation_detailed(PacmanStrategy pac_strategy, GhostStrat
         }
         
         if (pac_strategy == PacmanStrategy::ASTAR_FRS) {
-            int horizon = min(max_ticks - tick, 30);
+            // Use power_duration + 2 as horizon: ghosts beyond this range don't matter
+            // because Pac-Man can reach a pellet and become powered
+            int horizon = min(max_ticks - tick, power_duration + 2);
             if (g1 != DEAD) {
                 frs1.compute(maze, MAZE_ROWS, MAZE_COLS, g1, horizon);
                 result.stats.frs_recomputations++;
@@ -1102,6 +1326,7 @@ SimulationResult run_simulation_detailed(PacmanStrategy pac_strategy, GhostStrat
         }
         
         int old_p = p;
+        int safe_np2_from_filter = p;  // Will be set by safety filter if used
         
         // ================================================================
         // Get Pac-Man's first move
@@ -1125,7 +1350,7 @@ SimulationResult run_simulation_detailed(PacmanStrategy pac_strategy, GhostStrat
                 }
                 case PacmanStrategy::ASTAR_FILTER: {
                     bool intervention, fallback;
-                    np1 = astar_filter_tracked(p, goal, g1, g2, pellet_mask, power_timer, intervention, fallback);
+                    np1 = astar_filter_tracked(p, goal, g1, g2, pellet_mask, power_timer, intervention, fallback, &safe_np2_from_filter);
                     if (intervention) result.stats.safety_interventions++;
                     if (fallback) result.stats.safety_fallbacks++;
                     break;
@@ -1179,8 +1404,11 @@ SimulationResult run_simulation_detailed(PacmanStrategy pac_strategy, GhostStrat
             if (pac_strategy == PacmanStrategy::OPTIMAL) {
                 // For optimal play, use the unified move function which returns np2
                 get_optimal_pacman_move(p, g1, g2, pellet_mask, power_timer, &np2);
+            } else if (pac_strategy == PacmanStrategy::ASTAR_FILTER) {
+                // For safety filter, use the pre-computed safe np2
+                np2 = safe_np2_from_filter;
             } else {
-                // For A* strategies, do second A* move toward goal
+                // For other A* strategies, do second A* move toward goal
                 int goal2 = find_nearest_ghost(np1, temp_g1, temp_g2);
                 if (goal2 < 0) goal2 = np1;
                 np2 = astar_get_preferred_move(np1, goal2);
@@ -1248,6 +1476,8 @@ SimulationResult run_simulation_detailed(PacmanStrategy pac_strategy, GhostStrat
             if (np1 == ng1 || np1 == ng2 || clip1 || clip2) {
                 result.survival_time = tick + 1;
                 result.death_position = np1;
+                result.death_tick = tick + 1;
+                result.pellets_eaten_at_death = num_pellets - __builtin_popcount(new_pellet_mask);
                 return result;
             }
             
@@ -1302,6 +1532,12 @@ struct AggregatedStats {
     
     long long total_win_time = 0;
     vector<int> win_times;
+    
+    // Failure mode analysis
+    int deaths_before_any_pellet = 0;     // Died with 0 pellets eaten
+    int deaths_with_some_pellets = 0;     // Died with 1-3 pellets eaten
+    int deaths_after_all_pellets = 0;     // Died with all 4 pellets eaten (resources exhausted)
+    vector<int> death_ticks;              // When deaths occurred
 };
 
 AggregatedStats evaluate_detailed(PacmanStrategy pac_strategy, GhostStrategy ghost_strategy,
@@ -1379,6 +1615,16 @@ AggregatedStats evaluate_detailed(PacmanStrategy pac_strategy, GhostStrategy gho
         
         if (sim.death_position >= 0 && sim.death_position < MAZE_CELLS) {
             agg.death_counts[sim.death_position]++;
+            agg.death_ticks.push_back(sim.death_tick);
+            
+            // Failure mode analysis
+            if (sim.pellets_eaten_at_death == 0) {
+                agg.deaths_before_any_pellet++;
+            } else if (sim.pellets_eaten_at_death >= num_pellets) {
+                agg.deaths_after_all_pellets++;
+            } else {
+                agg.deaths_with_some_pellets++;
+            }
         }
         
         if (sim.won) {
@@ -1419,7 +1665,8 @@ void write_csv_header(ofstream& csv) {
         << "pct_in_safe_state,pct_in_unsafe_state,avg_safe_to_unsafe_transitions,"
         << "avg_first_pellet_tick,"
         << "survival_dist_0_2,survival_dist_3_5,survival_dist_6_8,survival_dist_9plus,"
-        << "avg_win_time"
+        << "avg_win_time,"
+        << "deaths_before_pellet,deaths_with_some_pellets,deaths_after_all_pellets"
         << endl;
 }
 
@@ -1492,7 +1739,10 @@ void write_csv_row(ofstream& csv, const string& pac_name, const string& ghost_na
         << fixed << setprecision(2) << surv_3_5 << ","
         << fixed << setprecision(2) << surv_6_8 << ","
         << fixed << setprecision(2) << surv_9plus << ","
-        << fixed << setprecision(2) << avg_win_time
+        << fixed << setprecision(2) << avg_win_time << ","
+        << agg.deaths_before_any_pellet << ","
+        << agg.deaths_with_some_pellets << ","
+        << agg.deaths_after_all_pellets
         << endl;
 }
 

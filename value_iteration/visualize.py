@@ -219,7 +219,7 @@ def plot_intervention_rates(df, output_dir):
         ax.set_title('A* + Safety Filter: Intervention Rates\n(% of ticks where filter acted)')
         ax.set_xticks(x)
         ax.set_xticklabels(ghosts)
-        ax.legend(loc='lower right', fancybox=True, shadow=True)
+        ax.legend(loc='upper right', fancybox=True, shadow=True)
         
         for bar in bars1:
             height = bar.get_height()
@@ -473,6 +473,84 @@ def plot_death_heatmap(deaths_csv, output_dir):
     print("  Created: death_heatmap.png")
 
 
+def plot_failure_mode_analysis(df, output_dir):
+    """Plot failure mode analysis - when and why deaths occur."""
+    # Check if we have the failure mode columns
+    if 'deaths_before_pellet' not in df.columns:
+        print("  Skipping failure mode analysis (no failure data)")
+        return
+    
+    fig, axes = plt.subplots(2, 1, figsize=(10, 12))
+    
+    # Only show strategies that have deaths
+    strategies_with_deaths = df[
+        (df['deaths_before_pellet'] + df['deaths_with_some_pellets'] + df['deaths_after_all_pellets']) > 0
+    ]
+    
+    if len(strategies_with_deaths) == 0:
+        plt.close()
+        print("  Skipping failure mode analysis (no deaths to analyze)")
+        return
+    
+    for idx, ghost_type in enumerate(['Optimal', 'Greedy_BFS']):
+        ax = axes[idx]
+        ghost_data = strategies_with_deaths[strategies_with_deaths['ghost_strategy'] == ghost_type]
+        
+        if len(ghost_data) == 0:
+            ax.text(0.5, 0.5, f'No deaths vs {get_ghost_display_name(ghost_type)}', 
+                   ha='center', va='center', transform=ax.transAxes, fontsize=14)
+            ax.set_title(f'Failure Modes vs {get_ghost_display_name(ghost_type)}')
+            continue
+        
+        strategies = ghost_data['pacman_strategy'].values
+        before_pellet = ghost_data['deaths_before_pellet'].values
+        with_pellets = ghost_data['deaths_with_some_pellets'].values
+        after_pellets = ghost_data['deaths_after_all_pellets'].values
+        
+        x = np.arange(len(strategies))
+        width = 0.25
+        
+        bars1 = ax.bar(x - width, before_pellet, width, label='Before any pellet (early)', 
+                       color='#e74c3c', edgecolor='black')
+        bars2 = ax.bar(x, with_pellets, width, label='With 1-3 pellets eaten', 
+                       color='#f39c12', edgecolor='black')
+        bars3 = ax.bar(x + width, after_pellets, width, label='After all pellets (exhausted)', 
+                       color='#9b59b6', edgecolor='black')
+        
+        ax.set_xlabel('Pac-Man Strategy')
+        ax.set_ylabel('Number of Deaths')
+        ax.set_title(f'Failure Modes vs {get_ghost_display_name(ghost_type)}')
+        ax.set_xticks(x)
+        ax.set_xticklabels([get_display_name(s) for s in strategies], rotation=30, ha='right')
+        
+        # Add value labels
+        for bars in [bars1, bars2, bars3]:
+            for bar in bars:
+                height = bar.get_height()
+                if height > 0:
+                    ax.annotate(f'{int(height)}',
+                               xy=(bar.get_x() + bar.get_width() / 2, height),
+                               xytext=(0, 3), textcoords="offset points",
+                               ha='center', va='bottom', fontsize=9)
+        
+        # Set ylim with headroom
+        all_vals = list(before_pellet) + list(with_pellets) + list(after_pellets)
+        max_val = max(all_vals) if all_vals else 1
+        ax.set_ylim(0, max_val * 1.2)
+    
+    plt.suptitle('Failure Mode Analysis: When Deaths Occur', fontsize=16, fontweight='bold')
+    
+    # Add shared legend below the plots
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc='lower center', ncol=3, fancybox=True, shadow=True,
+               bbox_to_anchor=(0.5, -0.02))
+    
+    plt.tight_layout(rect=[0, 0.08, 1, 1])  # Leave room for legend at bottom
+    plt.savefig(os.path.join(output_dir, 'failure_modes.png'), dpi=150, bbox_inches='tight')
+    plt.close()
+    print("  Created: failure_modes.png")
+
+
 # =============================================================================
 # Analysis Plots (from value table analysis)
 # =============================================================================
@@ -713,6 +791,7 @@ def main():
         plot_survival_by_distance(df, output_dir)
         plot_win_time_distribution(wins_csv, output_dir)
         plot_death_heatmap(deaths_csv, output_dir)
+        plot_failure_mode_analysis(df, output_dir)
         create_summary_table(df, output_dir)
     
     # Process analysis files if prefix provided
