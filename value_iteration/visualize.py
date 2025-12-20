@@ -223,18 +223,18 @@ def plot_intervention_rates(df, output_dir):
         
         for bar in bars1:
             height = bar.get_height()
-            if height > 0:
-                ax.annotate(f'{height:.1f}%',
-                           xy=(bar.get_x() + bar.get_width() / 2, height),
-                           xytext=(0, 3), textcoords="offset points",
-                           ha='center', va='bottom', fontsize=BAR_LABEL_FONTSIZE)
+            ax.annotate(f'{height:.1f}%',
+                       xy=(bar.get_x() + bar.get_width() / 2, max(height, 0.5)),
+                       xytext=(0, 3), textcoords="offset points",
+                       ha='center', va='bottom', fontsize=BAR_LABEL_FONTSIZE)
         for bar in bars2:
             height = bar.get_height()
-            if height > 0.01:
-                ax.annotate(f'{height:.2f}%',
-                           xy=(bar.get_x() + bar.get_width() / 2, height),
-                           xytext=(0, 3), textcoords="offset points",
-                           ha='center', va='bottom', fontsize=BAR_LABEL_FONTSIZE)
+            # Always show fallback rate, even if 0
+            label = f'{height:.2f}%' if height > 0 else '0%'
+            ax.annotate(label,
+                       xy=(bar.get_x() + bar.get_width() / 2, max(height, 0.5)),
+                       xytext=(0, 3), textcoords="offset points",
+                       ha='center', va='bottom', fontsize=BAR_LABEL_FONTSIZE)
         # Set ylim with headroom for labels
         max_val = max(max(intervention_rate), max(fallback_rate)) if len(intervention_rate) > 0 else 1
         ax.set_ylim(0, max_val * 1.3)
