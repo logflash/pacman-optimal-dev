@@ -1,1 +1,6 @@
 build/
+.claude
+core.*
+*.bin
+simulation_super
+value_iteration_super
